@@ -119,9 +119,11 @@
       </div>
       <div class="hint-box" id="pool-hint">Загрузка реестра СЕС…</div>
       <div class="hint-box" id="weakest-hint">Клик по маркеру — вкл/выкл · перетащите маркер</div>
+      <div class="hint-box" id="weakest-edge-hint">Отключение одного ребра — макс. падений стоков</div>
       <div class="error" id="error"></div>
       <button type="submit" id="generate-btn" disabled>Построить на карте</button>
       <button type="button" id="weakest-btn" class="secondary" disabled>Самая слабая вершина</button>
+      <button type="button" id="weakest-edge-btn" class="secondary" disabled>Самое слабое ребро</button>
     </form>
   </aside>
 
@@ -177,6 +179,8 @@
     const weakestHint = document.getElementById("weakest-hint");
     const generateBtn = document.getElementById("generate-btn");
     const weakestBtn = document.getElementById("weakest-btn");
+    const weakestEdgeBtn = document.getElementById("weakest-edge-btn");
+    const weakestEdgeHint = document.getElementById("weakest-edge-hint");
     const togglePanelsBtn = document.getElementById("toggle-panels-btn");
     const form = document.getElementById("params-form");
 
@@ -192,6 +196,7 @@
     function formatSummary(s) {
       let t = `Станций=${s.vertices} · рёбер=${s.edges_count} · prod=${s.production} · cons=${s.consumption} МВт`;
       if (s.disabled_count) t += ` · откл=${s.disabled_count}`;
+      if (s.disabled_edges_count) t += ` · ребр.откл=${s.disabled_edges_count}`;
       if (s.failed_count) t += ` · не обеспечено=${s.failed_count}`;
       return t;
     }
@@ -220,6 +225,18 @@
       weakestHint.textContent =
         `Слабая: ${w.letter}${name} (${ROLE_NAMES[w.role] || w.role}) → ${w.failed_count} стоков${extra ? ": " + extra : ""}`;
       weakestHint.className = "hint-box active";
+    }
+
+    function updateWeakestEdgeHint(w) {
+      if (!w) {
+        weakestEdgeHint.textContent = "Отключение одного ребра — макс. падений стоков";
+        weakestEdgeHint.className = "hint-box";
+        return;
+      }
+      const extra = (w.failed_letters || []).join(", ");
+      weakestEdgeHint.textContent =
+        `Слабое ребро: ${w.label} → ${w.failed_count} стоков${extra ? ": " + extra : ""}`;
+      weakestEdgeHint.className = "hint-box active";
     }
 
     function getPositions() {
@@ -279,7 +296,7 @@
       return `<b>${letter}</b> · ${ROLE_NAMES[node.role] || node.role}${name}${ob}<br>${lines.slice(1).join(" ")}`;
     }
 
-    function drawGraph(data, focusNode, fitBounds) {
+    function drawGraph(data, focusNode, fitBounds, focusEdge) {
       lastData = data;
       markersLayer.clearLayers();
       edgesLayer.clearLayers();
@@ -293,14 +310,15 @@
         const to = nodeMap.get(nodeId(e.to));
         if (!from || !to) continue;
         const off = from.disabled_manual || to.disabled_manual || from.disabled_failed || to.disabled_failed;
-        const zero = !e.label || e.label.endsWith(" 0");
+        const edgeOff = e.disabled_manual_edge;
+        const zero = !e.label || e.label.endsWith(" 0") || e.label.includes("✕");
         const line = L.polyline(
           [[from.lat, from.lng], [to.lat, to.lng]],
           {
-            color: off ? "#bbb" : zero ? "#ccc" : "#555",
-            weight: off ? 2 : 3,
-            opacity: off ? 0.5 : 0.75,
-            dashArray: zero || off ? "8 8" : null,
+            color: edgeOff ? "#e65100" : off ? "#bbb" : zero ? "#ccc" : "#555",
+            weight: edgeOff ? 5 : off ? 2 : 3,
+            opacity: edgeOff ? 0.95 : off ? 0.5 : 0.75,
+            dashArray: zero || off || edgeOff ? "8 8" : null,
           }
         );
         edgesLayer.addLayer(line);
@@ -340,6 +358,12 @@
       if (focusNode !== undefined && focusNode !== null) {
         const n = nodeMap.get(nodeId(focusNode));
         if (n) leafletMap.setView([n.lat, n.lng], Math.max(leafletMap.getZoom(), 8), { animate: true });
+      } else if (focusEdge && focusEdge.length === 2) {
+        const a = nodeMap.get(nodeId(focusEdge[0]));
+        const b = nodeMap.get(nodeId(focusEdge[1]));
+        if (a && b) {
+          leafletMap.fitBounds([[a.lat, a.lng], [b.lat, b.lng]], { padding: [80, 80], maxZoom: 10, animate: true });
+        }
       } else if (fitBounds && data.nodes.length) {
         const bounds = L.latLngBounds(data.nodes.map(n => [n.lat, n.lng]));
         leafletMap.fitBounds(bounds.pad(0.15));
@@ -364,15 +388,17 @@
       }, 650);
     }
 
-    function applyResult(data, focusNode, fitBounds) {
+    function applyResult(data, focusNode, fitBounds, focusEdge) {
       graphState = data.state;
       disabledSet = new Set((data.disabled || []).map(nodeId));
       summaryEl.textContent = formatSummary(data.summary);
       renderPanel(data);
-      drawGraph(data, focusNode, fitBounds);
+      drawGraph(data, focusNode, fitBounds, focusEdge);
       startBlink();
       if (data.weakest) updateWeakestHint(data.weakest);
+      if (data.weakest_edge) updateWeakestEdgeHint(data.weakest_edge);
       weakestBtn.disabled = false;
+      weakestEdgeBtn.disabled = false;
     }
 
     async function rebalance() {
@@ -395,13 +421,29 @@
       weakestBtn.disabled = true;
       weakestBtn.textContent = "Поиск…";
       try {
-        const data = GraphCore.showWeakest(graphState, getPositions());
+        const data = GraphCore.showWeakest(graphState, [...disabledSet], getPositions());
         applyResult(data, data.weakest?.vertex, false);
       } catch (e) {
         showError(e.message || "Ошибка");
       } finally {
         weakestBtn.disabled = false;
         weakestBtn.textContent = "Самая слабая вершина";
+      }
+    }
+
+    async function showWeakestEdge() {
+      if (!graphState) return;
+      showError("");
+      weakestEdgeBtn.disabled = true;
+      weakestEdgeBtn.textContent = "Поиск…";
+      try {
+        const data = GraphCore.showWeakestEdge(graphState, [...disabledSet], getPositions());
+        applyResult(data, undefined, false, data.weakest_edge?.edge);
+      } catch (e) {
+        showError(e.message || "Ошибка");
+      } finally {
+        weakestEdgeBtn.disabled = false;
+        weakestEdgeBtn.textContent = "Самое слабое ребро";
       }
     }
 
@@ -415,6 +457,7 @@
         const data = GraphCore.generateFromSolarStations(solarPool, { count, seed });
         disabledSet = new Set();
         updateWeakestHint(null);
+        updateWeakestEdgeHint(null);
         applyResult(data, undefined, true);
       } catch (e) {
         showError(e.message || "Не удалось построить");
@@ -477,6 +520,7 @@
 
     form.addEventListener("submit", e => { e.preventDefault(); generate(); });
     weakestBtn.addEventListener("click", showWeakest);
+    weakestEdgeBtn.addEventListener("click", showWeakestEdge);
     togglePanelsBtn.addEventListener("click", () => setGraphOnlyMode(!document.body.classList.contains("graph-only")));
     if (localStorage.getItem("mapGraphOnly") === "1") setGraphOnlyMode(true);
 

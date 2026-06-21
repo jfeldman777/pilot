@@ -125,6 +125,16 @@
       const edges = this.edges.filter(([u, v]) => set.has(u) && set.has(v));
       return new Graph(this.n, edges);
     }
+    subgraphBlocked(active, blockedEdgeKeys) {
+      const nodes = new Set(active);
+      const blocked = blockedEdgeKeys || new Set();
+      const edges = this.edges.filter(([u, v]) => {
+        if (!nodes.has(u) || !nodes.has(v)) return false;
+        const key = `${Math.min(u, v)},${Math.max(u, v)}`;
+        return !blocked.has(key);
+      });
+      return new Graph(this.n, edges);
+    }
     shortestPath(src, dst) {
       if (src === dst) return [src];
       const prev = new Map();
@@ -173,7 +183,29 @@
       consumption: Object.fromEntries(Object.entries(state.consumption).map(([k, v]) => [String(k), v])),
     };
     if (state.geo) out.geo = state.geo;
+    if (state.disabled_edges?.length) out.disabled_edges = state.disabled_edges.map(e => [...e]);
     return out;
+  }
+
+  function edgeKey(u, v) {
+    const a = Math.min(u, v);
+    const b = Math.max(u, v);
+    return `${a},${b}`;
+  }
+
+  function edgeKeySet(list) {
+    const s = new Set();
+    for (const e of list || []) {
+      if (typeof e === "string") s.add(e);
+      else if (Array.isArray(e)) s.add(edgeKey(e[0], e[1]));
+    }
+    return s;
+  }
+
+  function edgeKeyList(set) {
+    return [...set]
+      .map(k => k.split(",").map(Number))
+      .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   }
 
   function stateFromJson(data) {
@@ -192,6 +224,7 @@
       production,
       consumption,
       geo: data.geo || null,
+      disabled_edges: (data.disabled_edges || []).map(e => [...e]),
     };
   }
 
@@ -459,9 +492,9 @@
     return roles;
   }
 
-  function computeFlows(G, roles, production, consumption, seed, disabled = new Set()) {
+  function computeFlows(G, roles, production, consumption, seed, disabled = new Set(), disabledEdges = new Set()) {
     const active = new Set(G.nodes().filter(v => !disabled.has(v)));
-    const H = G.subgraph(active);
+    const H = G.subgraphBlocked(active, disabledEdges);
     const rng = new Random(seed + 2);
 
     const supply = {};
@@ -620,9 +653,10 @@
     return pos;
   }
 
-  function buildVisData(G, roles, production, consumption, edgeFlow, surplus, seed, disabled, failed, positions) {
+  function buildVisData(G, roles, production, consumption, edgeFlow, surplus, seed, disabled, failed, positions, disabledEdges) {
     disabled = disabled || new Set();
     failed = failed || new Set();
+    disabledEdges = disabledEdges || new Set();
     const n = G.n;
     const k = Math.max(1.8, 3.0 / Math.max(n, 1));
     const defaultPos = springLayout(n, G.edges, seed, 80, k);
@@ -688,8 +722,10 @@
     for (const [u, v] of G.edges) {
       const a = Math.min(u, v);
       const b = Math.max(u, v);
-      const offEdge = inactive.has(u) || inactive.has(v);
-      const f = offEdge ? 0 : edgeFlow[`${a},${b}`] || 0;
+      const ek = `${a},${b}`;
+      const edgeOff = disabledEdges.has(ek);
+      const offEdge = inactive.has(u) || inactive.has(v) || edgeOff;
+      const f = offEdge ? 0 : edgeFlow[ek] || 0;
       const [frm, to, arrow] = edgeDirection(u, v, f);
       const zeroFlow = Math.abs(f) < 1e-9;
       const dashed = offEdge || zeroFlow;
@@ -697,12 +733,16 @@
         id: `${u}-${v}`,
         from: frm,
         to,
-        label: edgeLabel(u, v, f),
+        label: edgeOff ? `${LETTERS[u]}—${LETTERS[v]} ✕` : edgeLabel(u, v, f),
         font: { size: edgeFont, align: "middle", background: "rgba(255,255,255,0.85)" },
-        color: { color: offEdge ? "#bbbbbb" : zeroFlow ? "#aaaaaa" : "#666666", highlight: "#333333" },
-        width: offEdge ? 1.5 : 2,
+        color: {
+          color: edgeOff ? "#e65100" : offEdge ? "#bbbbbb" : zeroFlow ? "#aaaaaa" : "#666666",
+          highlight: edgeOff ? "#bf360c" : "#333333",
+        },
+        width: edgeOff ? 3 : offEdge ? 1.5 : 2,
         smooth: { type: "continuous" },
         dashes: dashed ? [6, 8] : false,
+        disabled_manual_edge: edgeOff,
       };
       if (arrow && !offEdge) edge.arrows = "to";
       edges.push(edge);
@@ -724,9 +764,10 @@
     return { lat: g.lat, lng: g.lon, x: g.lon, y: g.lat };
   }
 
-  function buildMapVisData(G, roles, production, consumption, edgeFlow, surplus, seed, disabled, failed, geo, positions) {
+  function buildMapVisData(G, roles, production, consumption, edgeFlow, surplus, seed, disabled, failed, geo, positions, disabledEdges) {
     disabled = disabled || new Set();
     failed = failed || new Set();
+    disabledEdges = disabledEdges || new Set();
     const sizeMap = { generator: 44, consumer: 44, transit: 38 };
     const edgeFont = 12;
 
@@ -783,8 +824,10 @@
     for (const [u, v] of G.edges) {
       const a = Math.min(u, v);
       const b = Math.max(u, v);
-      const offEdge = inactive.has(u) || inactive.has(v);
-      const f = offEdge ? 0 : edgeFlow[`${a},${b}`] || 0;
+      const ek = `${a},${b}`;
+      const edgeOff = disabledEdges.has(ek);
+      const offEdge = inactive.has(u) || inactive.has(v) || edgeOff;
+      const f = offEdge ? 0 : edgeFlow[ek] || 0;
       const [frm, to, arrow] = edgeDirection(u, v, f);
       const zeroFlow = Math.abs(f) < 1e-9;
       const dashed = offEdge || zeroFlow;
@@ -792,11 +835,12 @@
         id: `${u}-${v}`,
         from: frm,
         to,
-        label: edgeLabel(u, v, f),
+        label: edgeOff ? `${LETTERS[u]}—${LETTERS[v]} ✕` : edgeLabel(u, v, f),
         font: { size: edgeFont, align: "middle", background: "rgba(255,255,255,0.85)" },
-        color: { color: offEdge ? "#bbbbbb" : zeroFlow ? "#aaaaaa" : "#555555", highlight: "#333333" },
-        width: offEdge ? 2 : 3,
+        color: { color: edgeOff ? "#e65100" : offEdge ? "#bbbbbb" : zeroFlow ? "#aaaaaa" : "#555555", highlight: "#333333" },
+        width: edgeOff ? 4 : offEdge ? 2 : 3,
         dashes: dashed ? [8, 10] : false,
+        disabled_manual_edge: edgeOff,
       };
       if (arrow && !offEdge) edge.arrows = "to";
       edges.push(edge);
@@ -886,19 +930,20 @@
   function evaluateState(state, disabled = new Set(), positions = null) {
     const G = stateToGraph(state);
     const params = state.params;
+    const disabledEdges = edgeKeySet(state.disabled_edges);
     const { edgeFlow, surplus, failed } = computeFlows(
-      G, state.roles, state.production, state.consumption, params.seed, disabled
+      G, state.roles, state.production, state.consumption, params.seed, disabled, disabledEdges
     );
     const balances = nodeBalance(G, state.production, state.consumption, edgeFlow, surplus);
     const isMap = !!(state.geo && Object.keys(state.geo).length);
     const { nodes, edges } = isMap
       ? buildMapVisData(
           G, state.roles, state.production, state.consumption,
-          edgeFlow, surplus, params.seed, disabled, failed, state.geo, positions
+          edgeFlow, surplus, params.seed, disabled, failed, state.geo, positions, disabledEdges
         )
       : buildVisData(
           G, state.roles, state.production, state.consumption,
-          edgeFlow, surplus, params.seed, disabled, failed, positions
+          edgeFlow, surplus, params.seed, disabled, failed, positions, disabledEdges
         );
     const checks = isMap
       ? runMapChecks(G, state.roles, state.production, state.consumption, surplus, balances, params, disabled, failed)
@@ -906,19 +951,24 @@
           G, state.roles, state.production, state.consumption,
           surplus, balances, params, disabled, failed
         );
+    if (disabledEdges.size) {
+      checks.push([`Отключено рёбер: ${disabledEdges.size}`, true]);
+    }
     let activeConsumption = 0;
     for (const v of G.nodes()) {
       if (state.roles[v] === "consumer" && !disabled.has(v) && !failed.has(v)) {
         activeConsumption += state.consumption[v] || 0;
       }
     }
+    const nextState = { ...state, disabled_edges: edgeKeyList(disabledEdges) };
     return {
       ok: true,
       nodes,
       edges,
       checks,
-      state: stateToJson(state),
+      state: stateToJson(nextState),
       disabled: [...disabled].sort((a, b) => a - b),
+      disabled_edges: edgeKeyList(disabledEdges),
       failed: [...failed].sort((a, b) => a - b),
       summary: {
         vertices: params.n_vertices,
@@ -927,6 +977,7 @@
         surplus: params.total_surplus,
         edges_count: G.edgeCount(),
         disabled_count: disabled.size,
+        disabled_edges_count: disabledEdges.size,
         failed_count: failed.size,
         served_consumption: activeConsumption,
       },
@@ -934,16 +985,20 @@
     };
   }
 
-  function findWeakestVertex(state) {
+  function findWeakestVertex(state, baseDisabled = new Set()) {
     const G = stateToGraph(state);
     const params = state.params;
+    const disabledEdges = edgeKeySet(state.disabled_edges);
     let bestV = 0;
     let bestFailed = new Set();
     let bestCount = -1;
 
     for (const v of G.nodes()) {
+      if (baseDisabled.has(v)) continue;
+      const trial = new Set(baseDisabled);
+      trial.add(v);
       const { failed } = computeFlows(
-        G, state.roles, state.production, state.consumption, params.seed, new Set([v])
+        G, state.roles, state.production, state.consumption, params.seed, trial, disabledEdges
       );
       const failedConsumers = new Set([...failed].filter(f => state.roles[f] === "consumer"));
       const count = failedConsumers.size;
@@ -959,6 +1014,53 @@
       letter: LETTERS[bestV],
       station_name: state.geo?.[String(bestV)]?.name || state.geo?.[bestV]?.name || "",
       role: state.roles[bestV],
+      failed_count: bestCount,
+      failed: [...bestFailed].sort((a, b) => a - b),
+      failed_letters: [...bestFailed].sort((a, b) => a - b).map(f => LETTERS[f]),
+    };
+  }
+
+  function findWeakestEdge(state, baseDisabled = new Set(), baseDisabledEdges = null) {
+    const G = stateToGraph(state);
+    const params = state.params;
+    const disabledEdges = baseDisabledEdges || edgeKeySet(state.disabled_edges);
+    let best = null;
+    let bestFailed = new Set();
+    let bestCount = -1;
+
+    for (const [u, v] of G.edges) {
+      const ek = edgeKey(u, v);
+      if (disabledEdges.has(ek)) continue;
+      const trial = new Set(disabledEdges);
+      trial.add(ek);
+      const { failed } = computeFlows(
+        G, state.roles, state.production, state.consumption, params.seed, baseDisabled, trial
+      );
+      const failedConsumers = new Set([...failed].filter(f => state.roles[f] === "consumer"));
+      const count = failedConsumers.size;
+      if (
+        count > bestCount ||
+        (count === bestCount && best && ek < best.edgeKey) ||
+        (count === bestCount && !best)
+      ) {
+        best = { u, v, a: Math.min(u, v), b: Math.max(u, v), edgeKey: ek };
+        bestFailed = failedConsumers;
+        bestCount = count;
+      }
+    }
+
+    if (!best) {
+      return { u: 0, v: 0, edge: [0, 0], edgeKey: "0,0", label: "—", failed_count: 0, failed: [], failed_letters: [] };
+    }
+
+    return {
+      u: best.u,
+      v: best.v,
+      edge: [best.a, best.b],
+      edgeKey: best.edgeKey,
+      label: `${LETTERS[best.u]}—${LETTERS[best.v]}`,
+      letter_u: LETTERS[best.u],
+      letter_v: LETTERS[best.v],
       failed_count: bestCount,
       failed: [...bestFailed].sort((a, b) => a - b),
       failed_letters: [...bestFailed].sort((a, b) => a - b).map(f => LETTERS[f]),
@@ -1073,13 +1175,39 @@
     return evaluateState(state, disabled, positions);
   }
 
-  function showWeakest(stateJson, positions) {
+  function showWeakest(stateJson, disabledList, positions) {
     const state = stateFromJson(stateJson);
-    const weakest = findWeakestVertex(state);
-    const result = evaluateState(state, new Set([weakest.vertex]), positions);
+    const disabled = new Set((disabledList || []).map(Number));
+    const weakest = findWeakestVertex(state, disabled);
+    const trial = new Set(disabled);
+    trial.add(weakest.vertex);
+    const result = evaluateState(state, trial, positions);
     result.weakest = weakest;
     return result;
   }
 
-  global.GraphCore = { generate, rebalance, showWeakest, generateFromSolarStations, pickSolarStations };
+  function showWeakestEdge(stateJson, disabledList, positions) {
+    const state = stateFromJson(stateJson);
+    const disabled = new Set((disabledList || []).map(Number));
+    const disabledEdges = edgeKeySet(state.disabled_edges);
+    const weakest = findWeakestEdge(state, disabled, disabledEdges);
+    if (!weakest || weakest.edgeKey === "0,0") {
+      throw new Error("Нет рёбер для отключения");
+    }
+    const nextEdges = new Set(disabledEdges);
+    nextEdges.add(weakest.edgeKey);
+    const nextState = { ...state, disabled_edges: edgeKeyList(nextEdges) };
+    const result = evaluateState(nextState, disabled, positions);
+    result.weakest_edge = weakest;
+    return result;
+  }
+
+  global.GraphCore = {
+    generate,
+    rebalance,
+    showWeakest,
+    showWeakestEdge,
+    generateFromSolarStations,
+    pickSolarStations,
+  };
 })(typeof window !== "undefined" ? window : globalThis);

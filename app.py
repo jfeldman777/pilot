@@ -16,6 +16,16 @@ def index():
     return send_from_directory(ROOT, "index.html")
 
 
+@app.get("/graph_core.js")
+def graph_core_js():
+    return send_from_directory(ROOT, "graph_core.js")
+
+
+@app.get("/map.html")
+def map_html():
+    return send_from_directory(ROOT, "map.html")
+
+
 @app.get("/<path:path>")
 def static_files(path):
     return send_from_directory(ROOT, path)
