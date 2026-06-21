@@ -1,77 +1,24 @@
-"""Веб-интерфейс: параметры слева, граф справа."""
+"""Локальный сервер: раздаёт статическую версию из docs/."""
 
 import os
 import webbrowser
 from threading import Timer
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, send_from_directory
 
-from graph_core import GraphParams, GraphState, generate_graph, rebalance_graph, show_weakest_case
+DOCS = os.path.join(os.path.dirname(__file__), "docs")
 
-app = Flask(__name__)
-app.config["TEMPLATES_AUTO_RELOAD"] = True
+app = Flask(__name__, static_folder=DOCS, static_url_path="")
 
 
 @app.get("/")
 def index():
-    return render_template("index.html")
+    return send_from_directory(DOCS, "index.html")
 
 
-@app.post("/api/generate")
-def api_generate():
-    data = request.get_json(silent=True) or {}
-
-    try:
-        params = GraphParams(
-            n_vertices=int(data.get("n_vertices", 20)),
-            n_generators=int(data.get("n_generators", 5)),
-            n_consumers=int(data.get("n_consumers", 10)),
-            n_transit=int(data.get("n_transit", 5)),
-            total_production=int(data.get("total_production", 50)),
-            total_consumption=int(data.get("total_consumption", 35)),
-            min_degree=int(data.get("min_degree", 2)),
-            max_degree=int(data.get("max_degree", 5)),
-            seed=int(data.get("seed", 42)),
-        )
-        result = generate_graph(params)
-        return jsonify({"ok": True, **result})
-    except (ValueError, TypeError) as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
-    except Exception as exc:
-        return jsonify({"ok": False, "error": f"Ошибка генерации: {exc}"}), 500
-
-
-@app.post("/api/rebalance")
-def api_rebalance():
-    data = request.get_json(silent=True) or {}
-    try:
-        if "state" not in data:
-            return jsonify({"ok": False, "error": "Нет state — нажмите «Сгенерировать» заново"}), 400
-        state = GraphState.from_json(data["state"])
-        disabled = {int(x) for x in data.get("disabled", [])}
-        positions = data.get("positions")
-        result = rebalance_graph(state, disabled, positions)
-        return jsonify({"ok": True, **result})
-    except (ValueError, TypeError, KeyError) as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
-    except Exception as exc:
-        return jsonify({"ok": False, "error": f"Ошибка перебалансировки: {exc}"}), 500
-
-
-@app.post("/api/weakest")
-def api_weakest():
-    data = request.get_json(silent=True) or {}
-    try:
-        if "state" not in data:
-            return jsonify({"ok": False, "error": "Нет state — нажмите «Сгенерировать» заново"}), 400
-        state = GraphState.from_json(data["state"])
-        positions = data.get("positions")
-        result = show_weakest_case(state, positions)
-        return jsonify({"ok": True, **result})
-    except (ValueError, TypeError, KeyError) as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
-    except Exception as exc:
-        return jsonify({"ok": False, "error": f"Ошибка поиска слабой вершины: {exc}"}), 500
+@app.get("/<path:path>")
+def static_files(path):
+    return send_from_directory(DOCS, path)
 
 
 def open_browser():
