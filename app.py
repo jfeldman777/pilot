@@ -32,10 +32,12 @@ def static_files(path):
 
 
 def open_browser():
-    webbrowser.open("http://127.0.0.1:5000")
+    webbrowser.open("http://127.0.0.1:5001")
 
 
 if __name__ == "__main__":
+    port = 5001
     if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+        print(f"Откройте: http://127.0.0.1:{port}")
         Timer(1.0, open_browser).start()
-    app.run(debug=True, use_reloader=False, port=5000)
+    app.run(debug=True, use_reloader=False, port=port)

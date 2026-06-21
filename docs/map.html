@@ -6,7 +6,6 @@
   <title>Потоки на карте СЕС — Украина</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="graph_core.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
@@ -118,7 +117,7 @@
         <input type="number" id="seed" value="42">
       </div>
       <div class="hint-box" id="pool-hint">Загрузка реестра СЕС…</div>
-      <div class="hint-box" id="weakest-hint">Клик по маркеру — вкл/выкл · перетащите маркер</div>
+      <div class="hint-box" id="weakest-hint">Клик по маркеру или линии — вкл/выкл · перетащите маркер</div>
       <div class="hint-box" id="weakest-edge-hint">Отключение одного ребра — макс. падений стоков</div>
       <div class="error" id="error"></div>
       <button type="submit" id="generate-btn" disabled>Построить на карте</button>
@@ -167,6 +166,7 @@
     let markerById = new Map();
     let graphState = null;
     let disabledSet = new Set();
+    let disabledEdgesSet = new Set();
     let solarPool = [];
     let rebalancing = false;
     let blinkTimer = null;
@@ -186,6 +186,41 @@
 
     function nodeId(raw) {
       return typeof raw === "string" ? parseInt(raw, 10) : raw;
+    }
+
+    function edgeKey(u, v) {
+      const a = Math.min(u, v);
+      const b = Math.max(u, v);
+      return `${a},${b}`;
+    }
+
+    function edgeKeyFromVisId(id) {
+      const [u, v] = String(id).split("-").map(Number);
+      return edgeKey(u, v);
+    }
+
+    function disabledEdgesList() {
+      return [...disabledEdgesSet]
+        .map(k => k.split(",").map(Number))
+        .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    }
+
+    function syncDisabledEdgesFromData(data) {
+      disabledEdgesSet = new Set();
+      for (const e of data.disabled_edges || data.state?.disabled_edges || []) {
+        disabledEdgesSet.add(edgeKey(e[0], e[1]));
+      }
+    }
+
+    function stateWithDisables() {
+      return { ...graphState, disabled_edges: disabledEdgesList() };
+    }
+
+    function toggleEdge(rawId) {
+      const key = edgeKeyFromVisId(rawId);
+      if (disabledEdgesSet.has(key)) disabledEdgesSet.delete(key);
+      else disabledEdgesSet.add(key);
+      rebalance();
     }
 
     function showError(msg) {
@@ -216,7 +251,7 @@
 
     function updateWeakestHint(w) {
       if (!w) {
-        weakestHint.textContent = "Клик по маркеру — вкл/выкл · перетащите маркер";
+        weakestHint.textContent = "Клик по маркеру или линии — вкл/выкл · перетащите маркер";
         weakestHint.className = "hint-box";
         return;
       }
@@ -321,7 +356,17 @@
             dashArray: zero || off || edgeOff ? "8 8" : null,
           }
         );
+        const hitLine = L.polyline(
+          [[from.lat, from.lng], [to.lat, to.lng]],
+          { color: "#000", weight: 14, opacity: 0 }
+        );
+        const edgeId = e.id || `${e.from}-${e.to}`;
+        hitLine.on("click", () => {
+          if (rebalancing) return;
+          toggleEdge(edgeId);
+        });
         edgesLayer.addLayer(line);
+        edgesLayer.addLayer(hitLine);
 
         const midLat = (from.lat + to.lat) / 2;
         const midLng = (from.lng + to.lng) / 2;
@@ -391,6 +436,7 @@
     function applyResult(data, focusNode, fitBounds, focusEdge) {
       graphState = data.state;
       disabledSet = new Set((data.disabled || []).map(nodeId));
+      syncDisabledEdgesFromData(data);
       summaryEl.textContent = formatSummary(data.summary);
       renderPanel(data);
       drawGraph(data, focusNode, fitBounds, focusEdge);
@@ -406,7 +452,7 @@
       rebalancing = true;
       showError("");
       try {
-        const data = GraphCore.rebalance(graphState, [...disabledSet], getPositions());
+        const data = GraphCore.rebalance(stateWithDisables(), [...disabledSet], getPositions());
         applyResult(data, undefined, false);
       } catch (e) {
         showError(e.message || "Ошибка перебалансировки");
@@ -421,7 +467,7 @@
       weakestBtn.disabled = true;
       weakestBtn.textContent = "Поиск…";
       try {
-        const data = GraphCore.showWeakest(graphState, [...disabledSet], getPositions());
+        const data = GraphCore.showWeakest(stateWithDisables(), [...disabledSet], getPositions());
         applyResult(data, data.weakest?.vertex, false);
       } catch (e) {
         showError(e.message || "Ошибка");
@@ -437,7 +483,7 @@
       weakestEdgeBtn.disabled = true;
       weakestEdgeBtn.textContent = "Поиск…";
       try {
-        const data = GraphCore.showWeakestEdge(graphState, [...disabledSet], getPositions());
+        const data = GraphCore.showWeakestEdge(stateWithDisables(), [...disabledSet], getPositions());
         applyResult(data, undefined, false, data.weakest_edge?.edge);
       } catch (e) {
         showError(e.message || "Ошибка");
@@ -456,6 +502,7 @@
       try {
         const data = GraphCore.generateFromSolarStations(solarPool, { count, seed });
         disabledSet = new Set();
+        disabledEdgesSet = new Set();
         updateWeakestHint(null);
         updateWeakestEdgeHint(null);
         applyResult(data, undefined, true);
@@ -518,6 +565,24 @@
       }
     }
 
+    async function loadGraphCore() {
+      if (typeof GraphCore !== "undefined") return true;
+      const paths = ["graph_core.js", "./graph_core.js", "docs/graph_core.js"];
+      for (const path of paths) {
+        try {
+          await new Promise((resolve, reject) => {
+            const s = document.createElement("script");
+            s.src = path + "?v=3";
+            s.onload = resolve;
+            s.onerror = reject;
+            document.head.appendChild(s);
+          });
+          if (typeof GraphCore !== "undefined") return true;
+        } catch (_) {}
+      }
+      return false;
+    }
+
     form.addEventListener("submit", e => { e.preventDefault(); generate(); });
     weakestBtn.addEventListener("click", showWeakest);
     weakestEdgeBtn.addEventListener("click", showWeakestEdge);
@@ -530,8 +595,8 @@
         summaryEl.textContent = "Ошибка загрузки карты";
         return;
       }
-      if (typeof GraphCore === "undefined" || !GraphCore.generateFromSolarStations) {
-        showError("Не загружен graph_core.js или устаревшая версия.");
+      if (!(await loadGraphCore()) || !GraphCore.generateFromSolarStations) {
+        showError("Не загружен graph_core.js. python app.py → http://127.0.0.1:5001 → Ctrl+F5");
         summaryEl.textContent = "Ошибка загрузки движка";
         return;
       }

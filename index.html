@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Граф потоков</title>
-  <script src="graph_core.js"></script>
   <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -393,7 +392,7 @@
         <span id="size-scale-label">100%</span>
         <button type="button" id="size-up" title="Увеличить">+</button>
       </div>
-      <div class="hint">Клик — вкл/выкл вершину · перетащите вершину · колёсико — масштаб</div>
+      <div class="hint">Клик — вкл/выкл вершину или ребро · перетащите вершину · колёсико — масштаб</div>
     </div>
   </main>
 
@@ -435,6 +434,7 @@
     let edgesDataset = null;
     let graphState = null;
     let disabledSet = new Set();
+    let disabledEdgesSet = new Set();
     let didDrag = false;
     let blinkTimer = null;
     let blinkPhase = true;
@@ -597,7 +597,7 @@
         selectConnectedEdges: false,
       },
       nodes: { borderWidth: 2, borderWidthSelected: 3, chosen: { label: false }, font: { size: 16 } },
-      edges: { chosen: false, selectionWidth: 0 },
+      edges: { chosen: false, selectionWidth: 0, hoverWidth: 2 },
     };
 
     function ballSizeFactor() {
@@ -728,10 +728,45 @@
       return typeof raw === "string" ? parseInt(raw, 10) : raw;
     }
 
+    function edgeKey(u, v) {
+      const a = Math.min(u, v);
+      const b = Math.max(u, v);
+      return `${a},${b}`;
+    }
+
+    function edgeKeyFromVisId(id) {
+      const [u, v] = String(id).split("-").map(Number);
+      return edgeKey(u, v);
+    }
+
+    function disabledEdgesList() {
+      return [...disabledEdgesSet]
+        .map(k => k.split(",").map(Number))
+        .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    }
+
+    function syncDisabledEdgesFromData(data) {
+      disabledEdgesSet = new Set();
+      for (const e of data.disabled_edges || data.state?.disabled_edges || []) {
+        disabledEdgesSet.add(edgeKey(e[0], e[1]));
+      }
+    }
+
+    function stateWithDisables() {
+      return { ...graphState, disabled_edges: disabledEdgesList() };
+    }
+
     function toggleNode(rawId) {
       const id = nodeId(rawId);
       if (disabledSet.has(id)) disabledSet.delete(id);
       else disabledSet.add(id);
+      rebalance();
+    }
+
+    function toggleEdge(rawId) {
+      const key = edgeKeyFromVisId(rawId);
+      if (disabledEdgesSet.has(key)) disabledEdgesSet.delete(key);
+      else disabledEdgesSet.add(key);
       rebalance();
     }
 
@@ -763,10 +798,15 @@
       return best !== null ? nodeId(best) : null;
     }
 
-    function handleNodeTap(params) {
+    function handleGraphTap(params) {
       if (didDrag || rebalancing) return;
       const now = Date.now();
       if (now - lastToggleAt < 350) return;
+      if (params.edges && params.edges.length) {
+        lastToggleAt = now;
+        toggleEdge(params.edges[0]);
+        return;
+      }
       const id = nodeAtPointer(params);
       if (id !== null) {
         lastToggleAt = now;
@@ -785,7 +825,7 @@
       network.on("dragging", () => { didDrag = true; });
       network.on("click", params => {
         clickHandledAt = Date.now();
-        handleNodeTap(params);
+        handleGraphTap(params);
       });
       network.on("dragEnd", params => {
         if (didDrag) {
@@ -799,7 +839,7 @@
           const dy = params.pointer.DOM.y - dragStartPointer.y;
           if (dx * dx + dy * dy > 16) return;
         }
-        handleNodeTap(params);
+        handleGraphTap(params);
       });
       network.on("afterDrawing", drawRoleColoredLetters);
     }
@@ -908,15 +948,33 @@
     function requireGraphCore() {
       if (typeof GraphCore === "undefined") {
         throw new Error(
-          "Не загружен graph_core.js. Остановите сервер (Ctrl+C), запустите python app.py и обновите Ctrl+F5."
+          "Не загружен graph_core.js. Остановите сервер (Ctrl+C), запустите python app.py и откройте http://127.0.0.1:5001"
         );
       }
+    }
+
+    async function loadGraphCore() {
+      if (typeof GraphCore !== "undefined") return true;
+      const paths = ["graph_core.js", "./graph_core.js", "docs/graph_core.js"];
+      for (const path of paths) {
+        try {
+          await new Promise((resolve, reject) => {
+            const s = document.createElement("script");
+            s.src = path + "?v=3";
+            s.onload = resolve;
+            s.onerror = reject;
+            document.head.appendChild(s);
+          });
+          if (typeof GraphCore !== "undefined") return true;
+        } catch (_) { /* try next path */ }
+      }
+      return false;
     }
 
     function checkEngineOnLoad() {
       if (typeof GraphCore !== "undefined") return true;
       showError(
-        "Не загружен graph_core.js. Остановите старый сервер (Ctrl+C), выполните python app.py и обновите Ctrl+F5."
+        "Не загружен graph_core.js. Ctrl+C в терминале → python app.py → http://127.0.0.1:5001 → Ctrl+F5"
       );
       btn.disabled = true;
       weakestBtn.disabled = true;
@@ -956,6 +1014,7 @@
     function applyResult(data) {
       graphState = data.state;
       disabledSet = new Set((data.disabled || []).map(nodeId));
+      syncDisabledEdgesFromData(data);
       const updateOpts = data.weakest
         ? { focusNode: data.weakest.vertex, focusScale: 1.25 }
         : data.weakest_edge
@@ -977,6 +1036,7 @@
       graphState = data.state;
       if (resetDisabled) {
         disabledSet = new Set();
+        disabledEdgesSet = new Set();
         nodeRoleColors = new Map();
       }
 
@@ -1005,14 +1065,15 @@
       showError("");
       try {
         let data;
+        const state = stateWithDisables();
         if (typeof GraphCore !== "undefined") {
-          data = GraphCore.rebalance(graphState, [...disabledSet], getPositions());
+          data = GraphCore.rebalance(state, [...disabledSet], getPositions());
         } else {
           const res = await fetch("/api/rebalance", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              state: graphState,
+              state,
               disabled: [...disabledSet],
               positions: getPositions(),
             }),
@@ -1042,7 +1103,7 @@
       try {
         let data;
         if (typeof GraphCore !== "undefined") {
-          data = GraphCore.showWeakest(graphState, [...disabledSet], getPositions());
+          data = GraphCore.showWeakest(stateWithDisables(), [...disabledSet], getPositions());
         } else {
           const res = await fetch("/api/weakest", {
             method: "POST",
@@ -1086,7 +1147,7 @@
       weakestEdgeBtn.textContent = "Поиск…";
       try {
         requireGraphCore();
-        const data = GraphCore.showWeakestEdge(graphState, [...disabledSet], getPositions());
+        const data = GraphCore.showWeakestEdge(stateWithDisables(), [...disabledSet], getPositions());
         applyResult(data);
       } catch (e) {
         showError(e.message || "Не удалось найти слабое ребро");
@@ -1225,7 +1286,14 @@
     setGraphOnlyMode(localStorage.getItem("graphOnly") === "1");
     updateSizeScaleLabel();
     updateSurplusHint();
-    if (checkEngineOnLoad()) generate();
+
+    (async function boot() {
+      if (!(await loadGraphCore())) {
+        checkEngineOnLoad();
+        return;
+      }
+      generate();
+    })();
   </script>
 </body>
 </html>
