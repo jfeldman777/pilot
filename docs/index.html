@@ -22,7 +22,7 @@
     .sidebar h1 { font-size: 18px; padding: 16px 16px 8px; }
     .sidebar p { font-size: 12px; color: #666; padding: 0 16px 12px; }
 
-    form { padding: 0 16px 16px; flex: 1; }
+    form { flex: 1; }
 
     .field { margin-bottom: 12px; }
     .field label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: #444; }
@@ -81,6 +81,73 @@
       background: #fff3e0;
       color: #e65100;
       border: 1px solid #ffcc80;
+    }
+
+    .reinforce-hint {
+      font-size: 12px;
+      line-height: 1.45;
+      padding: 8px 10px;
+      margin: 8px 0;
+      border-radius: 6px;
+      background: #f5f5f5;
+      color: #555;
+      border: 1px solid #e0e0e0;
+      white-space: pre-line;
+    }
+
+    .reinforce-hint.active {
+      background: #e8f5e9;
+      color: #2e7d32;
+      border: 1px solid #a5d6a7;
+    }
+
+    .budget-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .budget-row .field { margin: 0; }
+    .budget-row label { font-size: 11px; }
+    .budget-row input { padding: 6px 8px; font-size: 13px; }
+
+    .sidebar-mode-tabs {
+      display: flex;
+      gap: 6px;
+      padding: 0 16px 12px;
+      margin-bottom: 4px;
+    }
+    .mode-tab {
+      flex: 1;
+      padding: 8px 6px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      background: #f5f5f5;
+      color: #444;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .mode-tab:hover { background: #eee; }
+    .mode-tab.active {
+      background: #2196F3;
+      color: #fff;
+      border-color: #2196F3;
+    }
+    .sidebar-panel { padding: 0 16px 16px; }
+    .sidebar-panel.hidden { display: none; }
+    .sidebar-panel .field-desc {
+      font-size: 12px;
+      color: #666;
+      line-height: 1.45;
+      margin-bottom: 12px;
+    }
+    .price-hint {
+      font-size: 11px;
+      color: #777;
+      margin: -6px 0 10px;
+      line-height: 1.4;
     }
 
     .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -313,58 +380,92 @@
 <body>
   <aside class="sidebar" id="app-sidebar">
     <h1>Граф потоков</h1>
-    <p>Параметры генерации · <a href="map.html" style="color:#1976D2">Демо: карта СЕС →</a></p>
-    <form id="params-form">
+    <p id="sidebar-desc">Параметры генерации · <a href="map.html" style="color:#1976D2">Демо: карта СЕС →</a></p>
+    <div class="sidebar-mode-tabs">
+      <button type="button" id="mode-gen-btn" class="mode-tab active">Генерация</button>
+      <button type="button" id="mode-reinforce-btn" class="mode-tab">План укрепления</button>
+    </div>
+
+    <div id="panel-generate" class="sidebar-panel">
+      <form id="params-form">
+        <div class="field">
+          <label for="n_vertices">Вершин</label>
+          <input type="number" id="n_vertices" name="n_vertices" value="20" min="3" max="26">
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="n_generators">Генераторов</label>
+            <input type="number" id="n_generators" name="n_generators" value="5" min="1">
+          </div>
+          <div class="field">
+            <label for="n_consumers">Потребителей</label>
+            <input type="number" id="n_consumers" name="n_consumers" value="10" min="1">
+          </div>
+        </div>
+        <div class="field">
+          <label for="n_transit">Транзитных</label>
+          <input type="number" id="n_transit" name="n_transit" value="5" min="1">
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="total_production">Производство</label>
+            <input type="number" id="total_production" name="total_production" value="50" min="1">
+          </div>
+          <div class="field">
+            <label for="total_consumption">Потребление</label>
+            <input type="number" id="total_consumption" name="total_consumption" value="35" min="1">
+          </div>
+        </div>
+        <div class="surplus-hint" id="surplus-hint">Избыток: 15</div>
+        <div class="weakest-hint" id="weakest-hint">Отключение одной вершины — макс. падений потребителей</div>
+        <div class="weakest-hint" id="weakest-edge-hint">Отключение одного ребра — макс. падений потребителей</div>
+        <div class="field-row">
+          <div class="field">
+            <label for="min_degree">Степень min</label>
+            <input type="number" id="min_degree" name="min_degree" value="2" min="1">
+          </div>
+          <div class="field">
+            <label for="max_degree">Степень max</label>
+            <input type="number" id="max_degree" name="max_degree" value="5" min="1">
+          </div>
+        </div>
+        <div class="field">
+          <label for="seed">Seed</label>
+          <input type="number" id="seed" name="seed" value="42">
+        </div>
+        <button type="submit" id="generate-btn">Сгенерировать</button>
+        <button type="button" id="weakest-btn" class="secondary" disabled>Самая слабая вершина</button>
+        <button type="button" id="weakest-edge-btn" class="secondary" disabled>Самое слабое ребро</button>
+      </form>
+    </div>
+
+    <div id="panel-reinforce" class="sidebar-panel hidden">
+      <p class="field-desc">Минимизировать ущерб от худшего одиночного отказа (вершина или ребро). Можно добавить источник, транзит или ребро.</p>
       <div class="field">
-        <label for="n_vertices">Вершин</label>
-        <input type="number" id="n_vertices" name="n_vertices" value="20" min="3" max="26">
+        <label for="budget">Бюджет</label>
+        <input type="number" id="budget" value="10" min="0">
       </div>
+      <p class="price-hint">Цены: источник = 5 · транзит = 3 · ребро = 1</p>
       <div class="field-row">
         <div class="field">
-          <label for="n_generators">Генераторов</label>
-          <input type="number" id="n_generators" name="n_generators" value="5" min="1">
+          <label for="cost_generator">Источник</label>
+          <input type="number" id="cost_generator" value="5" min="1">
         </div>
         <div class="field">
-          <label for="n_consumers">Потребителей</label>
-          <input type="number" id="n_consumers" name="n_consumers" value="10" min="1">
+          <label for="cost_transit">Транзит</label>
+          <input type="number" id="cost_transit" value="3" min="1">
         </div>
       </div>
       <div class="field">
-        <label for="n_transit">Транзитных</label>
-        <input type="number" id="n_transit" name="n_transit" value="5" min="1">
+        <label for="cost_edge">Ребро</label>
+        <input type="number" id="cost_edge" value="1" min="1">
       </div>
-      <div class="field-row">
-        <div class="field">
-          <label for="total_production">Производство</label>
-          <input type="number" id="total_production" name="total_production" value="50" min="1">
-        </div>
-        <div class="field">
-          <label for="total_consumption">Потребление</label>
-          <input type="number" id="total_consumption" name="total_consumption" value="35" min="1">
-        </div>
-      </div>
-      <div class="surplus-hint" id="surplus-hint">Избыток: 15</div>
-      <div class="weakest-hint" id="weakest-hint">Отключение одной вершины — макс. падений потребителей</div>
-      <div class="weakest-hint" id="weakest-edge-hint">Отключение одного ребра — макс. падений потребителей</div>
-      <div class="field-row">
-        <div class="field">
-          <label for="min_degree">Степень min</label>
-          <input type="number" id="min_degree" name="min_degree" value="2" min="1">
-        </div>
-        <div class="field">
-          <label for="max_degree">Степень max</label>
-          <input type="number" id="max_degree" name="max_degree" value="5" min="1">
-        </div>
-      </div>
-      <div class="field">
-        <label for="seed">Seed</label>
-        <input type="number" id="seed" name="seed" value="42">
-      </div>
+      <div class="reinforce-hint" id="reinforce-hint">Сначала сгенерируйте граф, затем нажмите «Рассчитать план»</div>
+      <button type="button" id="reinforce-btn" class="secondary" disabled>Рассчитать план</button>
+    </div>
+    <div class="sidebar-panel">
       <div class="error" id="error"></div>
-      <button type="submit" id="generate-btn">Сгенерировать</button>
-      <button type="button" id="weakest-btn" class="secondary" disabled>Самая слабая вершина</button>
-      <button type="button" id="weakest-edge-btn" class="secondary" disabled>Самое слабое ребро</button>
-    </form>
+    </div>
   </aside>
 
   <main class="main" id="app-main">
@@ -410,6 +511,10 @@
       <h3>Активные потоки <span class="count" id="flows-count">0</span></h3>
       <ul class="panel-list flows-list" id="flows-list"></ul>
     </div>
+    <div class="panel-section">
+      <h3>План укрепления</h3>
+      <ul class="panel-list" id="reinforce-list"><li class="panel-empty">—</li></ul>
+    </div>
   </aside>
 
   <script>
@@ -423,6 +528,14 @@
     const weakestEdgeBtn = document.getElementById("weakest-edge-btn");
     const weakestHint = document.getElementById("weakest-hint");
     const weakestEdgeHint = document.getElementById("weakest-edge-hint");
+    const reinforceBtn = document.getElementById("reinforce-btn");
+    const reinforceHint = document.getElementById("reinforce-hint");
+    const reinforceList = document.getElementById("reinforce-list");
+    const modeGenBtn = document.getElementById("mode-gen-btn");
+    const modeReinforceBtn = document.getElementById("mode-reinforce-btn");
+    const panelGenerate = document.getElementById("panel-generate");
+    const panelReinforce = document.getElementById("panel-reinforce");
+    const sidebarDesc = document.getElementById("sidebar-desc");
     const sizeUpBtn = document.getElementById("size-up");
     const sizeDownBtn = document.getElementById("size-down");
     const sizeScaleLabel = document.getElementById("size-scale-label");
@@ -960,7 +1073,7 @@
         try {
           await new Promise((resolve, reject) => {
             const s = document.createElement("script");
-            s.src = path + "?v=3";
+            s.src = path + "?v=4";
             s.onload = resolve;
             s.onerror = reject;
             document.head.appendChild(s);
@@ -979,6 +1092,7 @@
       btn.disabled = true;
       weakestBtn.disabled = true;
       weakestEdgeBtn.disabled = true;
+      reinforceBtn.disabled = true;
       summaryEl.textContent = "Ошибка: нет graph_core.js";
       return false;
     }
@@ -1011,6 +1125,51 @@
       weakestEdgeHint.className = "weakest-hint active";
     }
 
+    function getReinforcementOpts() {
+      return {
+        budget: +document.getElementById("budget").value || 10,
+        cost_edge: +document.getElementById("cost_edge").value || 1,
+        cost_transit: +document.getElementById("cost_transit").value || 3,
+        cost_generator: +document.getElementById("cost_generator").value || 5,
+      };
+    }
+
+    function setSidebarMode(mode) {
+      const reinforce = mode === "reinforce";
+      panelGenerate.classList.toggle("hidden", reinforce);
+      panelReinforce.classList.toggle("hidden", !reinforce);
+      modeGenBtn.classList.toggle("active", !reinforce);
+      modeReinforceBtn.classList.toggle("active", reinforce);
+      sidebarDesc.innerHTML = reinforce
+        ? "План укрепления при ограниченном бюджете · <a href=\"map.html\" style=\"color:#1976D2\">Карта СЕС →</a>"
+        : "Параметры генерации · <a href=\"map.html\" style=\"color:#1976D2\">Демо: карта СЕС →</a>";
+      localStorage.setItem("sidebarMode", mode);
+      showError("");
+    }
+
+    modeGenBtn.addEventListener("click", () => setSidebarMode("generate"));
+    modeReinforceBtn.addEventListener("click", () => setSidebarMode("reinforce"));
+
+    function updateReinforcementHint(r) {
+      if (!r) {
+        reinforceHint.textContent = "Сначала сгенерируйте граф, затем нажмите «Рассчитать план»";
+        reinforceHint.className = "reinforce-hint";
+        reinforceList.innerHTML = '<li class="panel-empty">—</li>';
+        return;
+      }
+      const lines = r.plan?.length
+        ? r.plan.map(p => `• ${p.text}`).join("\n")
+        : "• без изменений (текущая сеть уже оптимальна в рамках бюджета)";
+      reinforceHint.textContent =
+        `Лучший план за ${r.budget} (потрачено ${r.total_cost}):\n${lines}\n\nУщерб до: ${r.damage_before} потребителей\nУщерб после: ${r.damage_after} потребителей`;
+      reinforceHint.className = "reinforce-hint active";
+      if (r.plan?.length) {
+        reinforceList.innerHTML = r.plan.map(p => `<li>${p.text}</li>`).join("");
+      } else {
+        reinforceList.innerHTML = '<li class="panel-empty">Без изменений</li>';
+      }
+    }
+
     function applyResult(data) {
       graphState = data.state;
       disabledSet = new Set((data.disabled || []).map(nodeId));
@@ -1021,15 +1180,18 @@
           ? { focusEdge: data.weakest_edge.edge }
           : {};
       applyGraphUpdate(data, updateOpts);
+      if (data.reinforcement_applied) fitGraphView();
       renderChecks(data.checks);
       summaryEl.textContent = formatSummary(data.summary);
       renderPanel(data);
       startBlink();
       if (data.weakest) updateWeakestHint(data.weakest);
       if (data.weakest_edge) updateWeakestEdgeHint(data.weakest_edge);
+      if (data.reinforcement) updateReinforcementHint(data.reinforcement);
       if (network && !data.weakest && !data.weakest_edge) network.unselectAll();
       weakestBtn.disabled = false;
       weakestEdgeBtn.disabled = false;
+      reinforceBtn.disabled = false;
     }
 
     function applyGraphData(data, resetDisabled) {
@@ -1057,6 +1219,36 @@
       startBlink();
       weakestBtn.disabled = false;
       weakestEdgeBtn.disabled = false;
+      reinforceBtn.disabled = false;
+    }
+
+    async function showReinforcementPlan() {
+      if (!graphState) {
+        showError("Сначала нажмите «Сгенерировать»");
+        return;
+      }
+      showError("");
+      reinforceBtn.disabled = true;
+      reinforceBtn.textContent = "Расчёт…";
+      updateWeakestHint(null);
+      updateWeakestEdgeHint(null);
+      try {
+        requireGraphCore();
+        const data = GraphCore.optimizeReinforcement(
+          stateWithDisables(),
+          getReinforcementOpts(),
+          getPositions()
+        );
+        disabledSet = new Set();
+        disabledEdgesSet = new Set();
+        applyResult(data);
+        setSidebarMode("reinforce");
+      } catch (e) {
+        showError(e.message || "Не удалось построить план укрепления");
+      } finally {
+        reinforceBtn.disabled = false;
+        reinforceBtn.textContent = "Рассчитать план";
+      }
     }
 
     async function rebalance() {
@@ -1268,6 +1460,7 @@
         applyGraphData(data, true);
         updateWeakestHint(null);
         updateWeakestEdgeHint(null);
+        updateReinforcementHint(null);
       } catch (e) {
         showError(e.message || "Не удалось сгенерировать граф");
       } finally {
@@ -1279,11 +1472,13 @@
     form.addEventListener("submit", e => { e.preventDefault(); generate(); });
     weakestBtn.addEventListener("click", showWeakest);
     weakestEdgeBtn.addEventListener("click", showWeakestEdge);
+    reinforceBtn.addEventListener("click", showReinforcementPlan);
     sizeUpBtn.addEventListener("click", () => changeNodeSizeScale(10));
     sizeDownBtn.addEventListener("click", () => changeNodeSizeScale(-10));
     togglePanelsBtn.addEventListener("click", toggleGraphOnlyMode);
     window.addEventListener("resize", () => refreshNetworkLayout(true));
     setGraphOnlyMode(localStorage.getItem("graphOnly") === "1");
+    setSidebarMode(localStorage.getItem("sidebarMode") === "reinforce" ? "reinforce" : "generate");
     updateSizeScaleLabel();
     updateSurplusHint();
 

@@ -1202,6 +1202,356 @@
     return result;
   }
 
+  function cloneState(state) {
+    return stateFromJson(stateToJson(state));
+  }
+
+  function worstFailureDamage(state) {
+    const G = stateToGraph(state);
+    const params = state.params;
+    const roles = state.roles;
+    const disabledEdges = edgeKeySet(state.disabled_edges);
+    let maxDamage = 0;
+
+    for (const v of G.nodes()) {
+      const { failed } = computeFlows(
+        G, roles, state.production, state.consumption, params.seed, new Set([v]), disabledEdges
+      );
+      const count = [...failed].filter(f => roles[f] === "consumer").length;
+      if (count > maxDamage) maxDamage = count;
+    }
+
+    for (const [u, v] of G.edges) {
+      const ek = edgeKey(u, v);
+      if (disabledEdges.has(ek)) continue;
+      const trialEdges = new Set(disabledEdges);
+      trialEdges.add(ek);
+      const { failed } = computeFlows(
+        G, roles, state.production, state.consumption, params.seed, new Set(), trialEdges
+      );
+      const count = [...failed].filter(f => roles[f] === "consumer").length;
+      if (count > maxDamage) maxDamage = count;
+    }
+    return maxDamage;
+  }
+
+  function avgGeneratorProduction(state) {
+    const gens = Object.keys(state.roles).filter(k => state.roles[k] === "generator");
+    if (!gens.length) return 5;
+    const total = gens.reduce((s, g) => s + (state.production[g] || 0), 0);
+    return Math.max(1, Math.round(total / gens.length));
+  }
+
+  function scoreMissingEdge(G, roles, u, v) {
+    const ru = roles[u];
+    const rv = roles[v];
+    let typeBonus = 1;
+    if ((ru === "generator" && rv === "transit") || (ru === "transit" && rv === "generator")) typeBonus = 4;
+    if ((ru === "transit" && rv === "consumer") || (ru === "consumer" && rv === "transit")) typeBonus = 4;
+    if (ru === "transit" && rv === "transit") typeBonus = 2.5;
+    return typeBonus + 2 / (1 + G.degree(u) + G.degree(v));
+  }
+
+  function missingEdgeCandidates(state, costs) {
+    const G = stateToGraph(state);
+    const roles = state.roles;
+    const n = state.params.n_vertices;
+    const cands = [];
+    for (let u = 0; u < n; u++) {
+      for (let v = u + 1; v < n; v++) {
+        if (G.hasEdge(u, v) || !edgeAllowed(u, v, roles)) continue;
+        cands.push({
+          type: "edge",
+          cost: costs.edge,
+          u,
+          v,
+          id: `edge:${edgeKey(u, v)}`,
+          score: scoreMissingEdge(G, roles, u, v),
+        });
+      }
+    }
+    cands.sort((a, b) => b.score - a.score || a.u - b.u || a.v - b.v);
+    return cands.slice(0, 10);
+  }
+
+  function transitNodeCandidates(state, costs, limit = 4) {
+    const G = stateToGraph(state);
+    const roles = state.roles;
+    const n = state.params.n_vertices;
+    if (n >= LETTERS.length) return [];
+    const raw = [];
+    const transits = [...Array(n).keys()].filter(v => roles[v] === "transit");
+    for (let i = 0; i < transits.length; i++) {
+      for (let j = i + 1; j < transits.length; j++) {
+        const u = transits[i];
+        const v = transits[j];
+        raw.push({ u, v, score: (G.hasEdge(u, v) ? 1 : 3) + 1 / (1 + G.degree(u) + G.degree(v)) });
+      }
+    }
+    for (const t of transits) {
+      for (let v = 0; v < n; v++) {
+        if (v === t || G.hasEdge(t, v) || !edgeAllowed(t, v, roles) || roles[v] === "transit") continue;
+        raw.push({ u: t, v, score: 2 + (roles[v] === "consumer" ? 2 : 1) });
+      }
+    }
+    raw.sort((a, b) => b.score - a.score);
+    const seen = new Set();
+    const out = [];
+    for (const c of raw) {
+      const id = `transit:${edgeKey(c.u, c.v)}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push({ type: "transit", cost: costs.transit, u: c.u, v: c.v, id, score: c.score });
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
+  function generatorNodeCandidates(state, costs, limit = 2) {
+    const G = stateToGraph(state);
+    const roles = state.roles;
+    const n = state.params.n_vertices;
+    if (n >= LETTERS.length) return [];
+    const transits = [...Array(n).keys()].filter(v => roles[v] === "transit");
+    transits.sort((a, b) => G.degree(a) - G.degree(b));
+    const prod = avgGeneratorProduction(state);
+    const out = transits.slice(0, limit).map(t => ({
+      type: "generator",
+      cost: costs.generator,
+      connect: t,
+      production: prod,
+      id: `gen:${t}`,
+      score: 1 / (1 + G.degree(t)),
+    }));
+    out.sort((a, b) => b.score - a.score);
+    return out;
+  }
+
+  function applyReinforcementAction(state, action) {
+    if (action.type === "edge") {
+      const G = stateToGraph(state);
+      if (!G.hasEdge(action.u, action.v)) state.edges.push([action.u, action.v]);
+      return;
+    }
+    const id = state.params.n_vertices;
+    if (id >= LETTERS.length) return;
+    state.params.n_vertices += 1;
+    if (action.type === "transit") {
+      state.params.n_transit += 1;
+      state.roles[id] = "transit";
+      state.edges.push([id, action.u], [id, action.v]);
+      if (state.geo) {
+        const gu = state.geo[String(action.u)] ?? state.geo[action.u];
+        const gv = state.geo[String(action.v)] ?? state.geo[action.v];
+        if (gu && gv) {
+          state.geo[String(id)] = {
+            lat: (gu.lat + gv.lat) / 2,
+            lon: (gu.lon + gv.lon) / 2,
+            name: `Транзит ${LETTERS[id]}`,
+          };
+        }
+      }
+    } else if (action.type === "generator") {
+      state.params.n_generators += 1;
+      state.params.total_production += action.production;
+      state.roles[id] = "generator";
+      state.production[id] = action.production;
+      state.edges.push([id, action.connect]);
+      if (state.geo) {
+        const gt = state.geo[String(action.connect)] ?? state.geo[action.connect];
+        if (gt) {
+          state.geo[String(id)] = {
+            lat: gt.lat + 0.08,
+            lon: gt.lon + 0.08,
+            name: `Источник ${LETTERS[id]}`,
+          };
+        }
+      }
+    }
+  }
+
+  function buildPlanDisplay(state, actions) {
+    const applied = cloneState(state);
+    const plan = [];
+    for (const a of actions) {
+      const idBefore = applied.params.n_vertices;
+      if (a.type === "edge") {
+        plan.push({
+          type: "edge",
+          cost: a.cost,
+          text: `добавить ребро ${LETTERS[a.u]}—${LETTERS[a.v]}: ${a.cost}`,
+          u: a.u,
+          v: a.v,
+        });
+      } else if (a.type === "transit") {
+        plan.push({
+          type: "transit",
+          cost: a.cost,
+          text: `добавить транзит ${LETTERS[idBefore]}: ${a.cost}`,
+          vertex: idBefore,
+          u: a.u,
+          v: a.v,
+        });
+      } else if (a.type === "generator") {
+        plan.push({
+          type: "generator",
+          cost: a.cost,
+          text: `добавить источник ${LETTERS[idBefore]}: ${a.cost}`,
+          vertex: idBefore,
+          connect: a.connect,
+          production: a.production,
+        });
+      }
+      applyReinforcementAction(applied, a);
+    }
+    return plan;
+  }
+
+  function greedyReinforcement(state, actions, budget) {
+    const chosen = [];
+    let cost = 0;
+    let bestState = cloneState(state);
+    let bestDamage = worstFailureDamage(state);
+    const pool = actions.map(a => ({ ...a }));
+
+    while (cost < budget && pool.length) {
+      let pick = null;
+      let pickState = null;
+      let pickDamage = bestDamage;
+      for (let i = 0; i < pool.length; i++) {
+        const a = pool[i];
+        if (cost + a.cost > budget) continue;
+        const s = cloneState(bestState);
+        applyReinforcementAction(s, a);
+        const dmg = worstFailureDamage(s);
+        if (dmg < pickDamage || (dmg === pickDamage && a.cost < (pick?.cost || Infinity))) {
+          pick = a;
+          pickState = s;
+          pickDamage = dmg;
+        }
+      }
+      if (!pick || pickDamage >= bestDamage) break;
+      chosen.push({ ...pick });
+      bestState = pickState;
+      bestDamage = pickDamage;
+      cost += pick.cost;
+      const idx = pool.findIndex(x => x.id === pick.id);
+      if (idx >= 0) pool.splice(idx, 1);
+    }
+    return { actions: chosen, damage: bestDamage, cost, state: bestState };
+  }
+
+  function searchReinforcementPlans(state, actions, budget, maxEval) {
+    const damageCache = new Map();
+    const stateSig = s =>
+      `${s.params.n_vertices}|${s.edges.map(e => edgeKey(e[0], e[1])).sort().join(";")}|${s.params.total_production}`;
+
+    function damageOf(s) {
+      const key = stateSig(s);
+      if (damageCache.has(key)) return damageCache.get(key);
+      const d = worstFailureDamage(s);
+      damageCache.set(key, d);
+      return d;
+    }
+
+    let best = { actions: [], damage: damageOf(state), cost: 0, state: cloneState(state) };
+    let evals = 0;
+
+    function consider(chosen, s, cost) {
+      if (++evals > maxEval) return;
+      const dmg = damageOf(s);
+      if (
+        dmg < best.damage ||
+        (dmg === best.damage && cost < best.cost) ||
+        (dmg === best.damage && cost === best.cost && chosen.length < best.actions.length)
+      ) {
+        best = { actions: chosen.map(a => ({ ...a })), damage: dmg, cost, state: cloneState(s) };
+      }
+    }
+
+    function dfs(i, cost, chosen, s) {
+      if (evals > maxEval) return;
+      consider(chosen, s, cost);
+      if (i >= actions.length || cost >= budget) return;
+      for (let j = i; j < actions.length; j++) {
+        const a = actions[j];
+        if (cost + a.cost > budget) continue;
+        const next = cloneState(s);
+        applyReinforcementAction(next, a);
+        chosen.push(a);
+        dfs(j + 1, cost + a.cost, chosen, next);
+        chosen.pop();
+      }
+    }
+    dfs(0, 0, [], cloneState(state));
+    return { ...best, evaluated: evals };
+  }
+
+  function pickBestPlan(state, actions, budget) {
+    const greedy = greedyReinforcement(state, actions, budget);
+    const searched = searchReinforcementPlans(state, actions, budget, 1200);
+    if (
+      searched.damage < greedy.damage ||
+      (searched.damage === greedy.damage && searched.cost < greedy.cost)
+    ) {
+      return { ...searched, evaluated: searched.evaluated, method: "search" };
+    }
+    return { ...greedy, evaluated: searched.evaluated, method: "greedy" };
+  }
+
+  function planReinforcement(stateJson, opts = {}) {
+    const state = stateFromJson(stateJson);
+    const budget = +opts.budget || 10;
+    const costs = {
+      edge: opts.cost_edge != null ? +opts.cost_edge : 1,
+      transit: opts.cost_transit != null ? +opts.cost_transit : 3,
+      generator: opts.cost_generator != null ? +opts.cost_generator : 5,
+    };
+    const damageBefore = worstFailureDamage(state);
+    const actions = [
+      ...missingEdgeCandidates(state, costs),
+      ...transitNodeCandidates(state, costs),
+      ...generatorNodeCandidates(state, costs),
+    ];
+
+    const best = pickBestPlan(state, actions, budget);
+    const plan = buildPlanDisplay(state, best.actions);
+    return {
+      ok: true,
+      budget,
+      costs,
+      damage_before: damageBefore,
+      damage_after: best.damage,
+      total_cost: best.cost,
+      plan,
+      plan_actions: best.actions.map(a => ({ ...a })),
+      evaluated: best.evaluated,
+      method: best.method,
+      candidates: actions.length,
+      state_after: stateToJson(best.state),
+    };
+  }
+
+  function applyReinforcement(stateJson, planActions, positions) {
+    const state = cloneState(stateFromJson(stateJson));
+    for (const a of planActions || []) applyReinforcementAction(state, a);
+    const result = evaluateState(state, new Set(), positions);
+    result.reinforcement_applied = true;
+    return result;
+  }
+
+  function optimizeReinforcement(stateJson, opts, positions) {
+    const plan = planReinforcement(stateJson, opts);
+    let result;
+    if (plan.plan_actions.length) {
+      result = applyReinforcement(stateJson, plan.plan_actions, positions);
+    } else {
+      result = evaluateState(stateFromJson(stateJson), new Set(), positions);
+    }
+    result.reinforcement = plan;
+    return result;
+  }
+
   global.GraphCore = {
     generate,
     rebalance,
@@ -1209,5 +1559,8 @@
     showWeakestEdge,
     generateFromSolarStations,
     pickSolarStations,
+    planReinforcement,
+    applyReinforcement,
+    optimizeReinforcement,
   };
 })(typeof window !== "undefined" ? window : globalThis);

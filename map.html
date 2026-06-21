@@ -19,7 +19,7 @@
     .sidebar p { font-size: 12px; color: #666; padding: 0 16px 10px; line-height: 1.4; }
     .sidebar a { color: #1976D2; font-size: 12px; padding: 0 16px 10px; display: inline-block; }
 
-    form { padding: 0 16px 16px; flex: 1; }
+    form { flex: 1; }
     .field { margin-bottom: 12px; }
     .field label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: #444; }
     .field input, .field select {
@@ -30,6 +30,20 @@
       padding: 8px 10px; margin-bottom: 12px; line-height: 1.45;
     }
     .weakest-hint.active, .hint-box.active { background: #fff3e0; color: #e65100; border: 1px solid #ffcc80; }
+    .reinforce-hint.active { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+    .budget-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .budget-row .field { margin-bottom: 0; }
+    .budget-row label { font-size: 10px; }
+    .sidebar-mode-tabs { display: flex; gap: 6px; padding: 0 16px 12px; }
+    .mode-tab {
+      flex: 1; padding: 8px 6px; border: 1px solid #ccc; border-radius: 6px;
+      background: #f5f5f5; color: #444; font-size: 12px; font-weight: 600; cursor: pointer;
+    }
+    .mode-tab.active { background: #2196F3; color: #fff; border-color: #2196F3; }
+    .sidebar-panel { padding: 0 16px 16px; }
+    .sidebar-panel.hidden { display: none; }
+    .sidebar-panel .field-desc { font-size: 12px; color: #666; line-height: 1.45; margin-bottom: 12px; }
+    .price-hint { font-size: 11px; color: #777; margin: -6px 0 10px; line-height: 1.4; }
 
     button {
       width: 100%; padding: 10px; background: #2196F3; color: #fff; border: none;
@@ -105,25 +119,51 @@
 <body>
   <aside class="sidebar" id="app-sidebar">
     <h1>Потоки на карте СЕС</h1>
-    <p>Координаты СЕС с <a href="https://vde-map.vercel.app/" target="_blank" rel="noopener">карты ВДЕ</a>. ⅓ — источники, ⅓ — стоки, ⅓ — транзит. Связи чаще между близкими станциями, мощности — случайно.</p>
-    <a href="index.html">← Абстрактный граф</a>
-    <form id="params-form">
+    <p id="sidebar-desc">Координаты СЕС с <a href="https://vde-map.vercel.app/" target="_blank" rel="noopener">карты ВДЕ</a>. ⅓ — источники, ⅓ — стоки, ⅓ — транзит.</p>
+    <a href="index.html" style="padding: 0 16px 10px; display: inline-block;">← Абстрактный граф</a>
+    <div class="sidebar-mode-tabs">
+      <button type="button" id="mode-gen-btn" class="mode-tab active">Карта</button>
+      <button type="button" id="mode-reinforce-btn" class="mode-tab">План укрепления</button>
+    </div>
+
+    <div id="panel-generate" class="sidebar-panel">
+      <form id="params-form">
+        <div class="field">
+          <label for="n_stations">Станций на схеме (÷3)</label>
+          <input type="number" id="n_stations" value="21" min="6" max="26" step="3">
+        </div>
+        <div class="field">
+          <label for="seed">Seed</label>
+          <input type="number" id="seed" value="42">
+        </div>
+        <div class="hint-box" id="pool-hint">Загрузка реестра СЕС…</div>
+        <div class="hint-box" id="weakest-hint">Клик по маркеру или линии — вкл/выкл · перетащите маркер</div>
+        <div class="hint-box" id="weakest-edge-hint">Отключение одного ребра — макс. падений стоков</div>
+        <button type="submit" id="generate-btn" disabled>Построить на карте</button>
+        <button type="button" id="weakest-btn" class="secondary" disabled>Самая слабая вершина</button>
+        <button type="button" id="weakest-edge-btn" class="secondary" disabled>Самое слабое ребро</button>
+      </form>
+    </div>
+
+    <div id="panel-reinforce" class="sidebar-panel hidden">
+      <p class="field-desc">Минимизировать ущерб от худшего одиночного отказа. Можно добавить источник, транзит или ребро.</p>
       <div class="field">
-        <label for="n_stations">Станций на схеме (÷3)</label>
-        <input type="number" id="n_stations" value="21" min="6" max="26" step="3">
+        <label for="budget">Бюджет</label>
+        <input type="number" id="budget" value="10" min="0">
+      </div>
+      <p class="price-hint">Цены: источник = 5 · транзит = 3 · ребро = 1</p>
+      <div class="budget-row">
+        <div class="field"><label for="cost_generator">Источник</label><input type="number" id="cost_generator" value="5" min="1"></div>
+        <div class="field"><label for="cost_transit">Транзит</label><input type="number" id="cost_transit" value="3" min="1"></div>
       </div>
       <div class="field">
-        <label for="seed">Seed</label>
-        <input type="number" id="seed" value="42">
+        <label for="cost_edge">Ребро</label>
+        <input type="number" id="cost_edge" value="1" min="1">
       </div>
-      <div class="hint-box" id="pool-hint">Загрузка реестра СЕС…</div>
-      <div class="hint-box" id="weakest-hint">Клик по маркеру или линии — вкл/выкл · перетащите маркер</div>
-      <div class="hint-box" id="weakest-edge-hint">Отключение одного ребра — макс. падений стоков</div>
-      <div class="error" id="error"></div>
-      <button type="submit" id="generate-btn" disabled>Построить на карте</button>
-      <button type="button" id="weakest-btn" class="secondary" disabled>Самая слабая вершина</button>
-      <button type="button" id="weakest-edge-btn" class="secondary" disabled>Самое слабое ребро</button>
-    </form>
+      <div class="hint-box reinforce-hint" id="reinforce-hint">Сначала постройте схему, затем «Рассчитать план»</div>
+      <button type="button" id="reinforce-btn" class="secondary" disabled>Рассчитать план</button>
+    </div>
+    <div class="sidebar-panel"><div class="error" id="error"></div></div>
   </aside>
 
   <main class="main">
@@ -153,6 +193,10 @@
       <h3>Активные потоки <span class="count" id="flows-count">0</span></h3>
       <ul class="panel-list flows-list" id="flows-list"></ul>
     </div>
+    <div class="panel-section">
+      <h3>План укрепления</h3>
+      <ul class="panel-list" id="reinforce-list"><li>—</li></ul>
+    </div>
   </aside>
 
   <script>
@@ -181,6 +225,14 @@
     const weakestBtn = document.getElementById("weakest-btn");
     const weakestEdgeBtn = document.getElementById("weakest-edge-btn");
     const weakestEdgeHint = document.getElementById("weakest-edge-hint");
+    const reinforceBtn = document.getElementById("reinforce-btn");
+    const reinforceHint = document.getElementById("reinforce-hint");
+    const reinforceList = document.getElementById("reinforce-list");
+    const modeGenBtn = document.getElementById("mode-gen-btn");
+    const modeReinforceBtn = document.getElementById("mode-reinforce-btn");
+    const panelGenerate = document.getElementById("panel-generate");
+    const panelReinforce = document.getElementById("panel-reinforce");
+    const sidebarDesc = document.getElementById("sidebar-desc");
     const togglePanelsBtn = document.getElementById("toggle-panels-btn");
     const form = document.getElementById("params-form");
 
@@ -273,6 +325,49 @@
         `Слабое ребро: ${w.label} → ${w.failed_count} стоков${extra ? ": " + extra : ""}`;
       weakestEdgeHint.className = "hint-box active";
     }
+
+    function getReinforcementOpts() {
+      return {
+        budget: +document.getElementById("budget").value || 10,
+        cost_edge: +document.getElementById("cost_edge").value || 1,
+        cost_transit: +document.getElementById("cost_transit").value || 3,
+        cost_generator: +document.getElementById("cost_generator").value || 5,
+      };
+    }
+
+    function updateReinforcementHint(r) {
+      if (!r) {
+        reinforceHint.textContent = "Сначала постройте схему, затем «Рассчитать план»";
+        reinforceHint.className = "hint-box reinforce-hint";
+        reinforceList.innerHTML = "<li>—</li>";
+        return;
+      }
+      const lines = r.plan?.length
+        ? r.plan.map(p => `• ${p.text}`).join("\n")
+        : "• без изменений";
+      reinforceHint.textContent =
+        `Лучший план за ${r.budget} (${r.total_cost}):\n${lines}\n\nУщерб до: ${r.damage_before} · после: ${r.damage_after} стоков`;
+      reinforceHint.className = "hint-box reinforce-hint active";
+      reinforceList.innerHTML = r.plan?.length
+        ? r.plan.map(p => `<li>${p.text}</li>`).join("")
+        : "<li>Без изменений</li>";
+    }
+
+    function setSidebarMode(mode) {
+      const reinforce = mode === "reinforce";
+      panelGenerate.classList.toggle("hidden", reinforce);
+      panelReinforce.classList.toggle("hidden", !reinforce);
+      modeGenBtn.classList.toggle("active", !reinforce);
+      modeReinforceBtn.classList.toggle("active", reinforce);
+      sidebarDesc.innerHTML = reinforce
+        ? "План укрепления сети СЕС при ограниченном бюджете"
+        : "Координаты СЕС с <a href=\"https://vde-map.vercel.app/\" target=\"_blank\" rel=\"noopener\">карты ВДЕ</a>. ⅓ — источники, ⅓ — стоки, ⅓ — транзит.";
+      localStorage.setItem("mapSidebarMode", mode);
+      showError("");
+    }
+
+    modeGenBtn.addEventListener("click", () => setSidebarMode("generate"));
+    modeReinforceBtn.addEventListener("click", () => setSidebarMode("reinforce"));
 
     function getPositions() {
       const out = {};
@@ -443,8 +538,10 @@
       startBlink();
       if (data.weakest) updateWeakestHint(data.weakest);
       if (data.weakest_edge) updateWeakestEdgeHint(data.weakest_edge);
+      if (data.reinforcement) updateReinforcementHint(data.reinforcement);
       weakestBtn.disabled = false;
       weakestEdgeBtn.disabled = false;
+      reinforceBtn.disabled = false;
     }
 
     async function rebalance() {
@@ -493,6 +590,31 @@
       }
     }
 
+    async function showReinforcementPlan() {
+      if (!graphState) return;
+      showError("");
+      reinforceBtn.disabled = true;
+      reinforceBtn.textContent = "Расчёт…";
+      updateWeakestHint(null);
+      updateWeakestEdgeHint(null);
+      try {
+        const data = GraphCore.optimizeReinforcement(
+          stateWithDisables(),
+          getReinforcementOpts(),
+          getPositions()
+        );
+        disabledSet = new Set();
+        disabledEdgesSet = new Set();
+        applyResult(data, undefined, true);
+        setSidebarMode("reinforce");
+      } catch (e) {
+        showError(e.message || "Ошибка планирования");
+      } finally {
+        reinforceBtn.disabled = false;
+        reinforceBtn.textContent = "Рассчитать план";
+      }
+    }
+
     function generate() {
       showError("");
       const count = +document.getElementById("n_stations").value;
@@ -505,6 +627,7 @@
         disabledEdgesSet = new Set();
         updateWeakestHint(null);
         updateWeakestEdgeHint(null);
+        updateReinforcementHint(null);
         applyResult(data, undefined, true);
       } catch (e) {
         showError(e.message || "Не удалось построить");
@@ -572,7 +695,7 @@
         try {
           await new Promise((resolve, reject) => {
             const s = document.createElement("script");
-            s.src = path + "?v=3";
+            s.src = path + "?v=4";
             s.onload = resolve;
             s.onerror = reject;
             document.head.appendChild(s);
@@ -586,8 +709,10 @@
     form.addEventListener("submit", e => { e.preventDefault(); generate(); });
     weakestBtn.addEventListener("click", showWeakest);
     weakestEdgeBtn.addEventListener("click", showWeakestEdge);
+    reinforceBtn.addEventListener("click", showReinforcementPlan);
     togglePanelsBtn.addEventListener("click", () => setGraphOnlyMode(!document.body.classList.contains("graph-only")));
     if (localStorage.getItem("mapGraphOnly") === "1") setGraphOnlyMode(true);
+    setSidebarMode(localStorage.getItem("mapSidebarMode") === "reinforce" ? "reinforce" : "generate");
 
     (async () => {
       if (typeof L === "undefined") {
