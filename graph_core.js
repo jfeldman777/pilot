@@ -465,11 +465,11 @@
     const n = G.n;
     const k = Math.max(1.8, 3.0 / Math.max(n, 1));
     const defaultPos = springLayout(n, G.edges, seed, 80, k);
-    const scale = n <= 6 ? 350 : 600;
+    const scale = n <= 6 ? 350 : 420;
     const sizeMap = n <= 6
       ? { generator: 42, consumer: 42, transit: 36 }
-      : { generator: 28, consumer: 28, transit: 22 };
-    const edgeFont = n <= 6 ? 10 : 11;
+      : { generator: 38, consumer: 38, transit: 32 };
+    const edgeFont = n <= 6 ? 11 : 12;
 
     const getPos = v => {
       if (positions) {
@@ -511,7 +511,7 @@
         y,
         color,
         size: nodeSize,
-        font: { color: fontColor, size: 14, face: "Arial", multi: true, bold: true },
+        font: { color: fontColor, size: 16, face: "Arial", multi: true, bold: true },
         borderWidth,
         disabled_manual: isOff,
         disabled_failed: isFailed,

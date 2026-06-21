@@ -472,8 +472,8 @@
         const letter = nodeLetter(n);
         if (!letter) continue;
         const roleColor = nodeRoleColors.get(nodeId(n.id)) || resolveRoleColor(n);
-        const size = n.size || 28;
-        const fontSize = Math.max(20, Math.round(size * 0.82));
+        const size = n.size || 38;
+        const fontSize = Math.max(22, Math.round(size * 0.82));
         ctx.font = `bold ${fontSize}px Arial, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -492,9 +492,17 @@
         multiselect: false,
         selectConnectedEdges: false,
       },
-      nodes: { borderWidth: 2, borderWidthSelected: 3, chosen: { label: false } },
+      nodes: { borderWidth: 2, borderWidthSelected: 3, chosen: { label: false }, font: { size: 16 } },
       edges: { chosen: false, selectionWidth: 0 },
     };
+
+    function fitGraphView() {
+      if (!network) return;
+      network.fit({ animation: false });
+      if (network.getScale() < 0.55) {
+        network.moveTo({ scale: 0.55, animation: false });
+      }
+    }
 
     function nodeId(raw) {
       return typeof raw === "string" ? parseInt(raw, 10) : raw;
@@ -583,6 +591,7 @@
       if (network) {
         network.unselectAll();
         network.redraw();
+        fitGraphView();
       }
     }
 
@@ -660,6 +669,7 @@
         edgesDataset = new vis.DataSet(data.edges);
         network = new vis.Network(container, { nodes: nodesDataset, edges: edgesDataset }, networkOptions);
         setupNetworkEvents();
+        fitGraphView();
       }
 
       renderChecks(data.checks);
