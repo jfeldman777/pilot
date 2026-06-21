@@ -1,0 +1,435 @@
+﻿<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ВДЕ Карта України — Реєстр та Аналітика</title>
+
+<!-- Leaflet -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+
+<!-- Шрифти -->
+<link href="https://fonts.googleapis.com/css2?family=Cormorant:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+<!-- Стилі (порядок важливий) -->
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/map.css">
+<link rel="stylesheet" href="css/registry.css">
+<link rel="stylesheet" href="css/oblast.css">
+<link rel="stylesheet" href="css/market.css">
+<link rel="stylesheet" href="css/modal.css">
+</head>
+<body>
+
+<!-- ── TOPBAR ── -->
+<div class="topbar">
+  <div class="brand">
+    <div class="brand-marks"><div class="lm lm1"></div><div class="lm lm2"></div></div>
+    <div>
+      <div class="brand-text">Енергетика <em>України</em></div>
+      <div class="brand-sub">Аналітика ВДЕ — Реєстр та задокументовані дані</div>
+    </div>
+  </div>
+  <div class="topbar-stats">
+    <div class="tst"><div class="tst-val" id="h-st">—</div><div class="tst-lbl">Станцiй</div></div>
+    <div class="tst-sep"></div>
+    <div class="tst">
+      <div class="tst-val" id="h-mw">—</div>
+      <div class="tst-lbl">МВт у записах</div>
+      <div class="tst-sub" id="h-mw-sub">—</div>
+    </div>
+    <div class="tst-sep"></div>
+    <div class="tst">
+      <div class="tst-val" id="h-ob">—</div>
+      <div class="tst-lbl">Областi</div>
+      <div class="tst-sub" id="h-ob-sub">—</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="pill pill-solar" id="h-solar-pill">— СЕС</div>
+    <div class="pill pill-wind" id="h-wind-pill">— ВЕС</div>
+    <button id="goto-registry-btn" class="topbar-nav-btn">← Реєстр</button>
+  </div>
+</div>
+
+<!-- ── MAIN ── -->
+<div class="main" id="main">
+
+  <!-- MAP SIDE -->
+  <div class="map-side">
+    <div class="controls">
+      <span class="ctrl-lbl">Тип:</span>
+      <div class="fbtns">
+        <button class="fbtn fa" data-type="all">Всi</button>
+        <button class="fbtn" data-type="solar">Сонячнi</button>
+        <button class="fbtn" data-type="wind">Вiтровi</button>
+      </div>
+      <div class="csep"></div>
+      <span class="ctrl-lbl">Точнiсть:</span>
+      <div class="fbtns">
+        <button class="fbtn fa" data-geo="all">Всi</button>
+        <button class="fbtn" data-geo="exact">Точнi</button>
+        <button class="fbtn" data-geo="approx">Приблизнi</button>
+      </div>
+      <div class="csep"></div>
+      <button class="fbtn" id="mw-filter-btn" data-mw="off">⚡ З МВт</button>
+      <div class="csep"></div>
+      <div class="srch">
+        <input type="text" id="srch-inp" placeholder="Пошук станцiї...">
+        <div class="srch-res" id="srch-res"></div>
+      </div>
+      <button class="reset-btn" id="reset-btn">Скинути</button>
+    </div>
+
+    <div id="map">
+      <div class="loading-ov" id="loading-ov">
+        <div>
+          <div class="loading-txt" id="loading-txt">Завантаження даних...</div>
+          <div class="loading-sub" id="loading-sub">Підключаємось до бази даних.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="legend-box">
+      <div class="lg-ttl">Легенда</div>
+      <div class="lg-row"><div class="lg-dot" style="background:var(--amber)"></div>Сонячна СЕС</div>
+      <div class="lg-row"><div class="lg-dot" style="background:var(--blue2)"></div>Вiтрова ВЕС</div>
+      <div class="lg-row"><div class="lg-dot" style="background:transparent;border:2px dashed var(--amber);border-radius:2px"></div>Приблизна точка</div>
+      <div class="lg-sep"></div>
+      <div class="lg-row"><div class="lg-sq" style="background:rgba(212,168,50,0.3)"></div>Область (є данi)</div>
+      <div class="lg-row"><div class="lg-sq" style="background:rgba(14,34,64,0.08)"></div>Область (немає)</div>
+    </div>
+  </div>
+
+  <!-- PANEL -->
+  <div class="panel">
+    <div class="ph">
+      <div class="ph-lbl">Аналiтика / Реєстр НКРЕКП</div>
+      <div class="ph-title" id="panel-title">Вся <em>Украiна</em></div>
+    </div>
+    <div class="ptabs">
+      <div class="ptab active" data-tab="overview">Огляд</div>
+      <div class="ptab" data-tab="oblast">Область</div>
+      <div class="ptab" data-tab="station">Станцiя</div>
+      <div class="ptab" data-tab="market">Трейдинг</div>
+      <button id="expand-btn" class="expand-btn" title="Розгорнути / Згорнути">⤢</button>
+    </div>
+    <div class="pcontent">
+
+      <!-- TAB: ОГЛЯД -->
+      <div class="tpanel active" id="tab-overview">
+        <div class="scards">
+          <div class="scard"><div class="sv ac" id="ov-total">—</div><div class="sl">Всього станцiй</div></div>
+          <div class="scard"><div class="sv gc" id="ov-mw">—</div><div class="sl">МВт у джерелах</div></div>
+          <div class="scard"><div class="sv ac" id="ov-solar">—</div><div class="sl">Сонячних СЕС</div></div>
+          <div class="scard"><div class="sv bc" id="ov-wind">—</div><div class="sl">Вiтрових ВЕС</div></div>
+        </div>
+        <div class="capbar-wrap">
+          <div class="capbar-lbl">
+            <span>Розподiл задокументованих МВт</span>
+            <span id="cap-pct-lbl">—</span>
+          </div>
+          <div class="capbar" id="capbar"></div>
+        </div>
+        <div style="padding:0 0 12px">
+          <div class="secttl">Топ областей за задокументованими МВт</div>
+          <div class="ob-list" id="ob-list"></div>
+        </div>
+        <div class="note">
+          <b>Джерело:</b> Реєстр НКРЕКП, вiдкритi набори та зiставленi публiчнi записи.
+          Показник МВт вiдображає лише ту потужнiсть, яку вдалося знайти у вiдкритих джерелах.
+        </div>
+      </div>
+
+      <!-- TAB: ОБЛАСТЬ -->
+      <div class="tpanel" id="tab-oblast">
+        <div id="ob-browse" style="display:block">
+          <div style="padding:0 0 10px">
+            <div class="secttl">Оберiть область</div>
+            <div id="ob-browse-list"></div>
+          </div>
+        </div>
+        <div id="ob-detail-wrap" style="display:none">
+          <button class="back-btn" id="ob-back">← Всi областi</button>
+          <div id="ob-detail"></div>
+        </div>
+      </div>
+
+      <!-- TAB: СТАНЦІЯ -->
+      <div class="tpanel" id="tab-station">
+        <div id="st-list-wrap">
+          <div class="st-filters">
+            <div class="stf-row1">
+              <div class="stf-search-wrap">
+                <span class="stf-si">🔍</span>
+                <input id="st-list-search" type="text" placeholder="Назва станцiї або компанiя...">
+                <button id="stf-clear" title="Очистити">✕</button>
+              </div>
+              <span id="st-list-count"></span>
+            </div>
+            <div class="stf-row2">
+              <div class="stf-type-btns">
+                <button class="stf-type active" data-t="all">Всi</button>
+                <button class="stf-type" data-t="solar">☀ СЕС</button>
+                <button class="stf-type" data-t="wind">💨 ВЕС</button>
+              </div>
+              <div class="stf-ob-scroll" id="stf-ob-chips"></div>
+            </div>
+            <div class="stf-row3">
+              <button class="stf-flag" data-flag="coords">З координатами</button>
+              <button class="stf-flag" data-flag="contact">Є контакт</button>
+              <button class="stf-flag" data-flag="capacity">Є МВт</button>
+            </div>
+          </div>
+          <div id="st-list"></div>
+        </div>
+        <div id="st-detail-wrap" style="display:none">
+          <button class="back-btn" id="st-back">← Реєстр</button>
+          <div id="st-detail"></div>
+        </div>
+      </div>
+
+      <!-- TAB: РИНОК -->
+      <div class="tpanel" id="tab-market">
+        <div class="market-shell">
+          <div class="market-bar">
+            <div class="market-bar-top">
+              <div>
+                <div class="market-kicker">Трейдинг / Оцінка портфеля</div>
+                <div class="market-head">Ринкова <em>аналітика</em></div>
+              </div>
+              <div class="market-pills">
+                <div class="mpill ok">ENTSO-E sync</div>
+                <div class="mpill info">OREE live</div>
+                <div class="mpill warn">MARS active</div>
+                <div class="mpill risk">wartime caps</div>
+              </div>
+            </div>
+            <div class="market-meta">
+              <span id="market-date">—</span>
+              <span id="market-time">— EET</span>
+            </div>
+            <div class="market-ticker">
+              <div class="market-ticker-inner" id="market-ticker-inner"></div>
+            </div>
+          </div>
+
+          <div class="market-strip">
+            <div class="market-strip-item">
+              <div class="ms-label">РДН Поточна година</div>
+              <div class="ms-value">4 285 <small>грн/МВт·год</small></div>
+              <div class="ms-delta" style="color:var(--green)">▲ +3,2% від учора</div>
+            </div>
+            <div class="market-strip-item">
+              <div class="ms-label">ВДР Поточна година</div>
+              <div class="ms-value">4 510 <small>грн/МВт·год</small></div>
+              <div class="ms-delta" style="color:var(--blue2)">▲ +5,4% до РДН</div>
+            </div>
+            <div class="market-strip-item">
+              <div class="ms-label">СЕС у датасеті</div>
+              <div class="ms-value" id="ms-solar">—</div>
+              <div class="ms-delta" id="ms-solar-mw">—</div>
+            </div>
+            <div class="market-strip-item">
+              <div class="ms-label">ВЕС у датасеті</div>
+              <div class="ms-value" id="ms-wind">—</div>
+              <div class="ms-delta" id="ms-wind-mw">—</div>
+            </div>
+          </div>
+
+          <div class="market-card">
+            <div class="market-title"><span class="accent">РДН</span> — Погодинні ціни на добу наперед</div>
+            <div class="market-chart"><canvas id="chart-dam"></canvas></div>
+            <div class="market-explain"><b>Що це?</b> Базовий орієнтир для оцінки PPA та ціни перепродажу.</div>
+          </div>
+          <div class="market-card">
+            <div class="market-title"><span class="accent">ВДР / БР</span> — Коригування позиції та вартість помилки прогнозу</div>
+            <div class="market-chart"><canvas id="chart-idm"></canvas></div>
+            <div class="market-explain"><b>Що дивитися?</b> Чим ширший розрив між РДН, ВДР і БР — тим дорожче помилка прогнозу.</div>
+          </div>
+          <div class="market-card">
+            <div class="market-title"><span class="accent">Solar</span> — Добовий профіль сонячної генерації</div>
+            <div class="market-chart"><canvas id="chart-solar"></canvas></div>
+            <div class="market-explain"><b>Важливо:</b> сонце закриває денне навантаження, але не працює вночі.</div>
+          </div>
+          <div class="market-card">
+            <div class="market-title"><span class="accent">Wind</span> — Добовий профіль вітрової генерації</div>
+            <div class="market-chart"><canvas id="chart-wind"></canvas></div>
+            <div class="market-explain"><b>Чому це корисно?</b> Вітер частково компенсує нічні та ранкові години.</div>
+          </div>
+          <div class="market-card">
+            <div class="market-title"><span class="accent">Match</span> — Генерація проти профілю споживання</div>
+            <div class="market-chart"><canvas id="chart-match"></canvas></div>
+            <div class="metric-stack">
+              <div>
+                <div class="metric-row"><span>Покриття споживання генерацією</span><span class="pct" id="metric-coverage">—</span></div>
+                <div class="metric-track"><div class="metric-fill" id="bar-coverage"></div></div>
+              </div>
+              <div>
+                <div class="metric-row"><span>Утилізація генерації</span><span class="pct blue" id="metric-util">—</span></div>
+                <div class="metric-track"><div class="metric-fill blue" id="bar-util"></div></div>
+              </div>
+              <div>
+                <div class="metric-row"><span>Ризик дисбалансу</span><span class="pct" id="metric-risk">—</span></div>
+                <div class="metric-track"><div class="metric-fill amber" id="bar-risk"></div></div>
+              </div>
+            </div>
+            <div class="gauge-wrap">
+              <svg class="gauge-svg" viewBox="0 0 170 94">
+                <path d="M 15 80 A 70 70 0 0 1 155 80" fill="none" stroke="rgba(14,34,64,0.08)" stroke-width="14" stroke-linecap="round"/>
+                <path d="M 15 80 A 70 70 0 0 1 67 18" fill="none" stroke="rgba(26,106,70,0.6)" stroke-width="14" stroke-linecap="round"/>
+                <path d="M 67 18 A 70 70 0 0 1 103 18" fill="none" stroke="rgba(212,168,50,0.55)" stroke-width="14" stroke-linecap="round"/>
+                <path d="M 103 18 A 70 70 0 0 1 155 80" fill="none" stroke="rgba(192,57,43,0.5)" stroke-width="14" stroke-linecap="round"/>
+                <line id="gauge-needle" x1="85" y1="80" x2="48" y2="28" stroke="var(--amber2)" stroke-width="2.5" stroke-linecap="round"/>
+                <circle cx="85" cy="80" r="5" fill="var(--amber2)"/>
+              </svg>
+              <div class="gauge-labels">
+                <span style="color:var(--green)">Низький</span>
+                <span style="color:var(--amber2)">Середній</span>
+                <span style="color:var(--red)">Високий</span>
+              </div>
+              <div class="gauge-num" id="gauge-num">—</div>
+              <div class="gauge-subtitle">Очікувана похибка прогнозу генерації</div>
+            </div>
+          </div>
+          <div class="market-card">
+            <div class="market-title"><span class="accent">Калькулятор</span> — Економіка угоди</div>
+            <div class="calc-row">
+              <div class="calc-field"><div class="calc-label">Потужність (МВт)</div><input class="calc-input" id="inp-mw" type="number" value="5" min="0.1" step="0.5"></div>
+              <div class="calc-field"><div class="calc-label">Ціна PPA (грн/МВт·год)</div><input class="calc-input" id="inp-ppa" type="number" value="3800" min="100" step="100"></div>
+              <div class="calc-field"><div class="calc-label">КВВП / КВУМ</div><input class="calc-input" id="inp-kf" type="number" value="0.16" min="0.05" max="0.5" step="0.01"></div>
+              <div class="calc-field"><div class="calc-label">Ціна продажу клієнту</div><input class="calc-input" id="inp-sell" type="number" value="4800" min="100" step="100"></div>
+            </div>
+            <button class="calc-btn" id="calc-btn">Порахувати</button>
+            <div class="econ-grid">
+              <div class="econ-box winner" id="econ-bilateral">
+                <div class="econ-label">Двосторонній договір</div>
+                <div class="econ-val" id="ev-margin">—</div>
+                <div class="econ-sub" id="ev-month">—</div>
+                <div class="winner-badge" id="ev-badge">вигідніше</div>
+              </div>
+              <div class="econ-box" id="econ-dam">
+                <div class="econ-label">Купівля на РДН</div>
+                <div class="econ-val" id="ev-dam-margin">—</div>
+                <div class="econ-sub" id="ev-dam-month">—</div>
+              </div>
+            </div>
+            <div class="market-explain"><b>Формула:</b> маржа = ціна продажу клієнту − ціна купівлі − вартість дисбалансу.</div>
+          </div>
+          <div class="market-card">
+            <div class="market-title"><span class="accent">Pipeline</span> — Активні угоди та кандидати</div>
+            <table class="deal-table">
+              <thead><tr><th>Об'єкт</th><th>Тип</th><th>МВт</th><th>Ціна</th><th>Метч.</th><th>Статус</th></tr></thead>
+              <tbody>
+                <tr><td>СЕС Миколаїв-2</td><td><span class="tag tag-buy">Купівля</span></td><td>8,5</td><td>3 650</td><td style="color:var(--green)">71%</td><td style="color:var(--amber2)">Переговори</td></tr>
+                <tr><td>ВЕС Херсон-Пд.</td><td><span class="tag tag-buy">Купівля</span></td><td>22,0</td><td>4 100</td><td style="color:var(--green)">58%</td><td style="color:var(--blue2)">Аналіз</td></tr>
+                <tr><td>Клієнт: Агрохолд.</td><td><span class="tag tag-sell">Продаж</span></td><td>12,0</td><td>4 900</td><td style="color:var(--amber2)">44%</td><td style="color:var(--amber2)">Переговори</td></tr>
+                <tr><td>СЕС Одеса-3</td><td><span class="tag tag-ana">Оцінка</span></td><td>5,0</td><td>3 800</td><td style="color:var(--green)">67%</td><td style="color:var(--blue2)">Аналіз</td></tr>
+                <tr><td>Клієнт: ЦОД Київ</td><td><span class="tag tag-sell">Продаж</span></td><td>3,0</td><td>5 200</td><td style="color:var(--green)">82%</td><td style="color:var(--green)">Підписано</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="market-card">
+            <div class="market-title"><span class="accent">Контекст</span> — Регулювання та ризики</div>
+            <div class="risk-list">
+              <div class="risk-item low"><div class="risk-dot"></div><div class="risk-text"><b>Двосторонні договори</b><br>Можна укладати PPA без аукціонів.</div></div>
+              <div class="risk-item low"><div class="risk-dot"></div><div class="risk-text"><b>Аналітика без ліцензії</b><br>Прогнозування та метчинг — консультаційна послуга.</div></div>
+              <div class="risk-item med"><div class="risk-dot"></div><div class="risk-text"><b>Закритість частини даних</b><br>Потрібно комбінувати відкриті джерела та власні моделі.</div></div>
+            </div>
+          </div>
+          <div class="market-card">
+            <div class="market-title"><span class="accent">Борги</span> — Стан розрахунків перед ВДЕ</div>
+            <div class="market-chart sm"><canvas id="chart-debt"></canvas></div>
+            <div class="risk-list" style="margin-top:10px">
+              <div class="risk-item high"><div class="risk-dot"></div><div class="risk-text"><b>~22 млрд грн</b><br>Орієнтир боргу перед ВДЕ-виробниками на 2025 рік.</div></div>
+              <div class="risk-item med"><div class="risk-dot"></div><div class="risk-text"><b>97% сонячних СЕС</b><br>Ще живуть у логіці зеленого тарифу.</div></div>
+            </div>
+          </div>
+          <div class="market-card">
+            <div class="market-title"><span class="accent">CBAM</span> — Майбутній попит на зелену електроенергію</div>
+            <div class="market-chart sm"><canvas id="chart-cbam"></canvas></div>
+            <div class="risk-list" style="margin-top:10px">
+              <div class="risk-item high"><div class="risk-dot"></div><div class="risk-text"><b>Попит з боку експортерів</b><br>Металургія шукатиме зелену електроенергію для CBAM.</div></div>
+              <div class="risk-item med"><div class="risk-dot"></div><div class="risk-text"><b>Гарантії походження</b><br>Ринок ГП вже запущений.</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: форма оновлення даних власником -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div class="modal-title">Оновити дані станції</div>
+      <button class="modal-close" id="modal-close">✕</button>
+    </div>
+    <div class="modal-sub" id="modal-station-name"></div>
+    <form id="update-form" novalidate>
+      <div class="modal-grid">
+        <div class="modal-field">
+          <label class="modal-label">Ваше ім'я / компанія</label>
+          <input class="modal-input" name="submitter_name" placeholder="ТОВ Приклад Енерджі">
+        </div>
+        <div class="modal-field">
+          <label class="modal-label">Телефон *</label>
+          <input class="modal-input" name="submitter_phone" type="tel" placeholder="+380...">
+        </div>
+        <div class="modal-field">
+          <label class="modal-label">Email *</label>
+          <input class="modal-input" name="submitter_email" type="email" placeholder="power@example.com">
+        </div>
+        <div class="modal-field">
+          <label class="modal-label">Встановлена потужність, МВт</label>
+          <input class="modal-input" name="capacity_mw" type="number" step="0.01" placeholder="25">
+        </div>
+        <div class="modal-field modal-field-full">
+          <label class="modal-label">Актуальна адреса / розташування</label>
+          <input class="modal-input" name="address_update" placeholder="Миколаївська обл., с. Рівне, вул. Нова">
+        </div>
+        <div class="modal-field modal-field-full">
+          <label class="modal-label">Коментар</label>
+          <textarea class="modal-input modal-textarea" name="comment" placeholder="Будь-яка корисна інформація про станцію..."></textarea>
+        </div>
+      </div>
+      <div class="modal-hint">* Вкажіть хоча б один контакт (телефон або email)</div>
+      <div class="modal-msg" id="modal-msg"></div>
+      <div class="modal-actions">
+        <button type="submit" class="modal-submit" id="modal-submit">Надіслати</button>
+        <button type="button" class="modal-cancel" id="modal-cancel">Скасувати</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Зовнішні бібліотеки -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+<!-- Дані станцій (статичний масив ALL_STATIONS) -->
+<script src="all_stations.js"></script>
+
+<!-- Модулі застосунку (порядок важливий) -->
+<script src="js/config.js"></script>
+<script src="js/state.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/data.js"></script>
+<script src="js/map.js"></script>
+<script src="js/overview.js"></script>
+<script src="js/oblast.js"></script>
+<script src="js/registry.js"></script>
+<script src="js/market.js"></script>
+<script src="js/update-form.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>
+

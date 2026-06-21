@@ -154,7 +154,7 @@
 
   function stateToJson(state) {
     const p = state.params;
-    return {
+    const out = {
       params: {
         n_vertices: p.n_vertices,
         n_generators: p.n_generators,
@@ -165,16 +165,20 @@
         min_degree: p.min_degree,
         max_degree: p.max_degree,
         seed: p.seed,
+        mode: p.mode || "graph",
       },
       roles: Object.fromEntries(Object.entries(state.roles).map(([k, v]) => [String(k), v])),
       edges: state.edges,
       production: Object.fromEntries(Object.entries(state.production).map(([k, v]) => [String(k), v])),
       consumption: Object.fromEntries(Object.entries(state.consumption).map(([k, v]) => [String(k), v])),
     };
+    if (state.geo) out.geo = state.geo;
+    return out;
   }
 
   function stateFromJson(data) {
     const p = parseParams(data.params);
+    if (data.params?.mode) p.mode = data.params.mode;
     const roles = {};
     for (const [k, v] of Object.entries(data.roles)) roles[+k] = v;
     const production = {};
@@ -187,6 +191,7 @@
       edges: data.edges.map(e => [...e]),
       production,
       consumption,
+      geo: data.geo || null,
     };
   }
 
@@ -269,6 +274,52 @@
       const deg = G.degree(v);
       if (deg < minDeg || deg > maxDeg) {
         throw new Error(`Степень вершины ${LETTERS[v]} = ${deg}, нужно [${minDeg}, ${maxDeg}]`);
+      }
+    }
+    return G;
+  }
+
+  function generateLooseGraph(n, roles, seed) {
+    const rng = new Random(seed);
+    const G = new Graph(n);
+    const order = [...Array(n).keys()];
+    rng.shuffle(order);
+
+    for (let i = 1; i < order.length; i++) {
+      const u = order[i];
+      const prev = order.slice(0, i).filter(v => edgeAllowed(u, v, roles));
+      if (!prev.length) {
+        for (let j = 0; j < i; j++) {
+          if (edgeAllowed(u, order[j], roles)) {
+            G.addEdge(u, order[j]);
+            break;
+          }
+        }
+      } else {
+        G.addEdge(u, rng.choice(prev));
+      }
+    }
+
+    const candidates = [];
+    for (let u = 0; u < n; u++) {
+      for (let v = u + 1; v < n; v++) {
+        if (edgeAllowed(u, v, roles)) candidates.push([u, v]);
+      }
+    }
+    rng.shuffle(candidates);
+    const target = rng.randint(n, Math.max(n, Math.floor(n * 1.8)));
+    for (const [u, v] of candidates) {
+      if (G.edgeCount() >= target) break;
+      if (!G.hasEdge(u, v)) G.addEdge(u, v);
+    }
+
+    if (!G.isConnected()) {
+      for (let u = 0; u < n; u++) {
+        for (let v = u + 1; v < n; v++) {
+          if (!G.isConnected()) {
+            if (edgeAllowed(u, v, roles) && !G.hasEdge(u, v)) G.addEdge(u, v);
+          }
+        }
       }
     }
     return G;
