@@ -80,11 +80,24 @@
     .legend-item { display: flex; align-items: center; gap: 6px; }
     .dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #333; }
     .dot-manual {
-      width: 12px; height: 12px; border-radius: 50%;
-      background: linear-gradient(to right, #000 50%, #4CAF50 50%);
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #000;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 9px; font-weight: bold; color: #F44336;
       border: 1px solid #333;
     }
-    .dot-failed { background: #bdbdbd; border-color: #888; }
+    .dot-failed {
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #bdbdbd;
+      border: 1px solid #888;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 9px; font-weight: bold; color: #F44336;
+      animation: failed-pulse 1.3s ease-in-out infinite;
+    }
+    @keyframes failed-pulse {
+      0%, 100% { opacity: 1; filter: brightness(1); }
+      50% { opacity: 0.55; filter: brightness(0.75); }
+    }
     .dash { width: 20px; border-bottom: 2px dashed #aaa; }
 
     .checks {
@@ -126,6 +139,78 @@
     }
 
     .graph-wrap { flex: 1; position: relative; min-height: 0; display: flex; flex-direction: column; }
+
+    .info-panel {
+      width: 280px;
+      min-width: 280px;
+      background: #fff;
+      border-left: 1px solid #ddd;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+
+    .info-panel h2 {
+      font-size: 15px;
+      padding: 16px 16px 8px;
+      border-bottom: 1px solid #eee;
+    }
+
+    .panel-section {
+      padding: 12px 16px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .panel-section h3 {
+      font-size: 12px;
+      font-weight: 600;
+      color: #444;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .panel-section h3 .count {
+      background: #eee;
+      color: #555;
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: 10px;
+      font-weight: 600;
+    }
+
+    .panel-list {
+      list-style: none;
+      font-size: 12px;
+      color: #333;
+    }
+
+    .panel-list li {
+      padding: 4px 0;
+      border-bottom: 1px solid #f5f5f5;
+      line-height: 1.35;
+    }
+
+    .panel-list li:last-child { border-bottom: none; }
+
+    .panel-list .letter {
+      display: inline-block;
+      width: 18px;
+      font-weight: 700;
+      color: #222;
+    }
+
+    .panel-empty {
+      font-size: 12px;
+      color: #999;
+      font-style: italic;
+    }
+
+    .flows-list li {
+      font-family: "Consolas", "Courier New", monospace;
+      font-size: 11px;
+    }
   </style>
 </head>
 <body>
@@ -191,8 +276,8 @@
         <div class="legend-item"><span class="dot" style="background:#4CAF50"></span> Генератор</div>
         <div class="legend-item"><span class="dot" style="background:#F44336"></span> Потребитель</div>
         <div class="legend-item"><span class="dot" style="background:#2196F3"></span> Транзит</div>
-        <div class="legend-item"><span class="dot dot-manual"></span> Отключена кликом (двуцветная)</div>
-        <div class="legend-item"><span class="dot dot-failed"></span> Не обеспечена (сама)</div>
+        <div class="legend-item"><span class="dot dot-manual">A</span> Отключена кликом (буква цветом типа)</div>
+        <div class="legend-item"><span class="dot dot-failed">A</span> Не обеспечена (мигает, буква цветом типа)</div>
         <div class="legend-item"><span class="dash"></span> Нулевой поток</div>
       </div>
     </div>
@@ -202,6 +287,22 @@
       <div class="hint">Клик — вкл/выкл вершину · перетащите вершину · колёсико — масштаб</div>
     </div>
   </main>
+
+  <aside class="info-panel">
+    <h2>Состояние</h2>
+    <div class="panel-section">
+      <h3>Отключены кликом <span class="count" id="manual-count">0</span></h3>
+      <ul class="panel-list" id="manual-list"></ul>
+    </div>
+    <div class="panel-section">
+      <h3>Не обеспечены <span class="count" id="failed-count">0</span></h3>
+      <ul class="panel-list" id="failed-list"></ul>
+    </div>
+    <div class="panel-section">
+      <h3>Активные потоки <span class="count" id="flows-count">0</span></h3>
+      <ul class="panel-list flows-list" id="flows-list"></ul>
+    </div>
+  </aside>
 
   <script>
     const form = document.getElementById("params-form");
@@ -219,29 +320,135 @@
     let disabledSet = new Set();
     let didDrag = false;
     let lastTap = 0;
+    let blinkTimer = null;
+    let blinkPhase = true;
+    let nodeRoleColors = new Map();
 
-    function halfNodeImage(roleColor) {
-      const svg =
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
-        `<circle cx="32" cy="32" r="31" fill="${roleColor}"/>` +
-        `<path d="M32 32 L32 2 A30 30 0 0 0 32 62 Z" fill="#000"/>` +
-        `<circle cx="32" cy="32" r="31" fill="none" stroke="#222" stroke-width="2"/>` +
-        `</svg>`;
-      return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    const ROLE_COLORS = {
+      generator: "#4CAF50",
+      consumer: "#F44336",
+      transit: "#2196F3",
+    };
+    const INACTIVE_BG = new Set(["#000000", "#bdbdbd", "#8a8a8a", "#111111"]);
+
+    function isManuallyDisabled(n) {
+      return n.disabled_manual || disabledSet.has(nodeId(n.id));
+    }
+
+    function resolveRoleColor(n) {
+      const id = nodeId(n.id);
+      if (n.role_color) return n.role_color;
+      if (n.role && ROLE_COLORS[n.role]) return ROLE_COLORS[n.role];
+      if (graphState?.roles) {
+        const role = graphState.roles[String(id)] ?? graphState.roles[id];
+        if (role && ROLE_COLORS[role]) return ROLE_COLORS[role];
+      }
+      const c = n.color;
+      const bg = c && typeof c === "object" ? c.background : c;
+      if (bg && !INACTIVE_BG.has(bg)) return bg;
+      return ROLE_COLORS.transit;
+    }
+
+    function nodeLetter(n) {
+      return String(n.label || "").split("\n")[0];
+    }
+
+    function hiddenLabelFont(n) {
+      return { ...(n.font || {}), color: "rgba(0,0,0,0)" };
+    }
+
+    function blackNodeColor() {
+      const c = "#000000";
+      return {
+        background: c,
+        border: c,
+        highlight: { background: c, border: c },
+        hover: { background: "#111111", border: "#111111" },
+      };
+    }
+
+    function failedNodeColor(lit) {
+      const bg = lit ? "#bdbdbd" : "#8a8a8a";
+      return {
+        background: bg,
+        border: bg,
+        highlight: { background: bg, border: bg },
+        hover: { background: bg, border: bg },
+      };
+    }
+
+    function stopBlink() {
+      if (blinkTimer) {
+        clearInterval(blinkTimer);
+        blinkTimer = null;
+      }
+    }
+
+    function startBlink() {
+      stopBlink();
+      blinkTimer = setInterval(() => {
+        if (!nodesDataset || !network) return;
+        blinkPhase = !blinkPhase;
+        const updates = [];
+        nodesDataset.get().forEach(n => {
+          if (!n.disabled_failed) return;
+          const id = nodeId(n.id);
+          updates.push({
+            id,
+            color: failedNodeColor(blinkPhase),
+            role_color: resolveRoleColor(n),
+          });
+        });
+        if (updates.length) nodesDataset.update(updates);
+      }, 650);
     }
 
     function enrichNodes(nodes) {
       return nodes.map(n => {
-        if (!n.disabled_manual) return n;
-        const img = halfNodeImage(n.role_color || "#888888");
+        const id = nodeId(n.id);
+        const roleColor = resolveRoleColor(n);
+        nodeRoleColors.set(id, roleColor);
+        if (n.disabled_failed) {
+          return {
+            ...n,
+            role: n.role,
+            role_color: roleColor,
+            color: failedNodeColor(true),
+            font: hiddenLabelFont(n),
+          };
+        }
+        if (!isManuallyDisabled(n)) return { ...n, role_color: roleColor };
         return {
           ...n,
-          shape: "circularImage",
-          image: img,
-          brokenImage: img,
-          color: { border: "#222222", highlight: { border: "#222222" } },
+          role: n.role,
+          role_color: roleColor,
+          disabled_manual: true,
+          shape: "dot",
+          borderWidth: 2,
+          color: blackNodeColor(),
+          font: hiddenLabelFont(n),
         };
       });
+    }
+
+    function drawRoleColoredLetters(ctx) {
+      if (!nodesDataset || !network) return;
+      const positions = network.getPositions();
+      for (const n of nodesDataset.get()) {
+        if (!n.disabled_manual && !n.disabled_failed) continue;
+        const pos = positions[n.id];
+        if (!pos) continue;
+        const letter = nodeLetter(n);
+        if (!letter) continue;
+        const roleColor = nodeRoleColors.get(nodeId(n.id)) || resolveRoleColor(n);
+        const size = n.size || 28;
+        const fontSize = Math.max(20, Math.round(size * 0.82));
+        ctx.font = `bold ${fontSize}px Arial, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = roleColor;
+        ctx.fillText(letter, pos.x, pos.y);
+      }
     }
 
     const networkOptions = {
@@ -288,9 +495,11 @@
         const id = nodeAtPointer(params);
         if (id !== null) toggleNode(id);
       });
+      network.on("afterDrawing", drawRoleColoredLetters);
     }
 
     function replaceGraphData(data) {
+      nodeRoleColors = new Map();
       const nodeIds = nodesDataset.getIds();
       const edgeIds = edgesDataset.getIds();
       if (nodeIds.length) nodesDataset.remove(nodeIds);
@@ -338,7 +547,10 @@
 
     function applyGraphData(data, resetDisabled) {
       graphState = data.state;
-      if (resetDisabled) disabledSet = new Set();
+      if (resetDisabled) {
+        disabledSet = new Set();
+        nodeRoleColors = new Map();
+      }
 
       if (network) {
         replaceGraphData(data);
@@ -351,6 +563,8 @@
 
       renderChecks(data.checks);
       summaryEl.textContent = formatSummary(data.summary);
+      renderPanel(data);
+      startBlink();
     }
 
     async function rebalance() {
@@ -376,6 +590,7 @@
         replaceGraphData(data);
         renderChecks(data.checks);
         summaryEl.textContent = formatSummary(data.summary);
+        renderPanel(data);
       } catch (e) {
         showError("Не удалось перебалансировать");
       }
@@ -385,6 +600,69 @@
       checksEl.innerHTML = checks.map(c =>
         `<span class="check ${c.ok ? "ok" : "fail"}">${c.ok ? "✓" : "✗"} ${c.name}</span>`
       ).join("");
+    }
+
+    function extractPanel(data) {
+      const nodes = data.nodes || [];
+      const edges = data.edges || [];
+      const manual = [], failed = [], flows = [];
+      for (const n of nodes) {
+        const letter = String(n.label || "").split("\n")[0];
+        const entry = { letter, label: String(n.label || "").replace(/\n/g, " ") };
+        if (n.disabled_manual) manual.push(entry);
+        else if (n.disabled_failed) failed.push(entry);
+      }
+      for (const e of edges) {
+        const lbl = e.label || "";
+        if (lbl && !lbl.endsWith(" 0")) flows.push(lbl);
+      }
+      manual.sort((a, b) => a.letter.localeCompare(b.letter));
+      failed.sort((a, b) => a.letter.localeCompare(b.letter));
+      flows.sort();
+      return { manual_disabled: manual, failed, flows };
+    }
+
+    function renderPanel(data) {
+      const panel = extractPanel(data);
+      const manualList = document.getElementById("manual-list");
+      const failedList = document.getElementById("failed-list");
+      const flowsList = document.getElementById("flows-list");
+      const manualCount = document.getElementById("manual-count");
+      const failedCount = document.getElementById("failed-count");
+      const flowsCount = document.getElementById("flows-count");
+
+      if (!data || !data.nodes) {
+        manualList.innerHTML = '<li class="panel-empty">—</li>';
+        failedList.innerHTML = '<li class="panel-empty">—</li>';
+        flowsList.innerHTML = '<li class="panel-empty">—</li>';
+        manualCount.textContent = "0";
+        failedCount.textContent = "0";
+        flowsCount.textContent = "0";
+        return;
+      }
+
+      const renderItems = (list, items, emptyText) => {
+        if (!items.length) {
+          list.innerHTML = `<li class="panel-empty">${emptyText}</li>`;
+          return;
+        }
+        list.innerHTML = items.map(item =>
+          `<li><span class="letter">${item.letter}</span> ${item.label || item.letter}</li>`
+        ).join("");
+      };
+
+      renderItems(manualList, panel.manual_disabled || [], "Нет");
+      renderItems(failedList, panel.failed || [], "Нет");
+      manualCount.textContent = (panel.manual_disabled || []).length;
+      failedCount.textContent = (panel.failed || []).length;
+
+      const flows = panel.flows || [];
+      flowsCount.textContent = flows.length;
+      if (!flows.length) {
+        flowsList.innerHTML = '<li class="panel-empty">Нет активных потоков</li>';
+      } else {
+        flowsList.innerHTML = flows.map(f => `<li>${f}</li>`).join("");
+      }
     }
 
     function getParams() {
@@ -414,6 +692,7 @@
           return;
         }
         if (network) {
+          stopBlink();
           network.destroy();
           network = null;
           nodesDataset = null;

@@ -368,7 +368,7 @@ def build_vis_data(
         is_failed = v in failed and not is_off
 
         if is_off:
-            node_color = _node_color(COLOR[roles[v]])
+            node_color = _node_color("#000000")
             font_color = "#ffffff"
             border_width = 2
             node_size = size_map[roles[v]]
@@ -397,8 +397,8 @@ def build_vis_data(
         }
         if is_off or is_failed:
             node["chosen"] = {"node": False, "label": False}
-        if is_off:
-            node["role_color"] = COLOR[roles[v]]
+        node["role"] = roles[v]
+        node["role_color"] = COLOR[roles[v]]
         nodes.append(node)
 
     inactive_nodes = disabled | failed
@@ -471,6 +471,23 @@ def run_checks(
     return [{"name": name, "ok": ok} for name, ok in checks]
 
 
+def build_panel(nodes: list[dict], edges: list[dict]) -> dict:
+    manual, auto_failed = [], []
+    for n in nodes:
+        letter = n["label"].split("\n")[0]
+        entry = {"letter": letter, "label": n["label"].replace("\n", " ")}
+        if n.get("disabled_manual"):
+            manual.append(entry)
+        elif n.get("disabled_failed"):
+            auto_failed.append(entry)
+    flows = sorted(
+        e["label"] for e in edges if e.get("label") and not e["label"].endswith(" 0")
+    )
+    manual.sort(key=lambda x: x["letter"])
+    auto_failed.sort(key=lambda x: x["letter"])
+    return {"manual_disabled": manual, "failed": auto_failed, "flows": flows}
+
+
 def _evaluate_state(
     state: GraphState,
     disabled: set[int] | None = None,
@@ -523,6 +540,7 @@ def _evaluate_state(
             "failed_count": len(failed),
             "served_consumption": active_consumption,
         },
+        "panel": build_panel(nodes, edges),
     }
 
 
