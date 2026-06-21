@@ -424,38 +424,55 @@
       }
     }
 
-    function loadSolarPool() {
-      return new Promise((resolve, reject) => {
-        if (typeof ALL_STATIONS !== "undefined") {
-          resolve(ALL_STATIONS.filter(s => s.type === "solar" && s.lat != null && s.lon != null));
-          return;
-        }
-        const s = document.createElement("script");
-        s.src = "https://vde-map.vercel.app/all_stations.js";
-        s.async = true;
-        s.onload = () => {
-          if (typeof ALL_STATIONS === "undefined") {
-            reject(new Error("ALL_STATIONS не найден"));
-            return;
-          }
-          resolve(ALL_STATIONS.filter(st => st.type === "solar" && st.lat != null && st.lon != null));
-        };
-        s.onerror = () => {
-          fetch("data/solar_sample.json")
-            .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-            .then(resolve)
-            .catch(reject);
-        };
-        document.head.appendChild(s);
-      });
-    }
-
     function setGraphOnlyMode(on) {
       document.body.classList.toggle("graph-only", on);
       togglePanelsBtn.textContent = on ? "⊞ Панели" : "⛶ Граф";
       togglePanelsBtn.title = on ? "Показать панели" : "Скрыть панели";
       localStorage.setItem("mapGraphOnly", on ? "1" : "0");
-      setTimeout(() => map && map.invalidateSize(), 120);
+      setTimeout(() => { if (leafletMap) leafletMap.invalidateSize(); }, 120);
+    }
+
+    function filterSolar(stations) {
+      return stations.filter(s => s.type === "solar" && s.lat != null && s.lon != null);
+    }
+
+    async function loadSolarSample() {
+      const r = await fetch("data/solar_sample.json");
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }
+
+    function loadRemoteRegistry() {
+      return new Promise((resolve, reject) => {
+        if (typeof ALL_STATIONS !== "undefined") {
+          resolve(filterSolar(ALL_STATIONS));
+          return;
+        }
+        const s = document.createElement("script");
+        s.src = "https://vde-map.vercel.app/all_stations.js";
+        const timer = setTimeout(() => {
+          s.remove();
+          reject(new Error("Таймаут загрузки реестра"));
+        }, 15000);
+        s.onload = () => {
+          clearTimeout(timer);
+          if (typeof ALL_STATIONS === "undefined") reject(new Error("ALL_STATIONS не найден"));
+          else resolve(filterSolar(ALL_STATIONS));
+        };
+        s.onerror = () => {
+          clearTimeout(timer);
+          reject(new Error("Сеть: vde-map недоступен"));
+        };
+        document.head.appendChild(s);
+      });
+    }
+
+    async function loadSolarPool() {
+      try {
+        return await loadRemoteRegistry();
+      } catch (_) {
+        return loadSolarSample();
+      }
     }
 
     form.addEventListener("submit", e => { e.preventDefault(); generate(); });
@@ -464,15 +481,27 @@
     if (localStorage.getItem("mapGraphOnly") === "1") setGraphOnlyMode(true);
 
     (async () => {
+      if (typeof L === "undefined") {
+        showError("Не загрузился Leaflet. Проверьте интернет.");
+        summaryEl.textContent = "Ошибка загрузки карты";
+        return;
+      }
+      if (typeof GraphCore === "undefined" || !GraphCore.generateFromSolarStations) {
+        showError("Не загружен graph_core.js или устаревшая версия.");
+        summaryEl.textContent = "Ошибка загрузки движка";
+        return;
+      }
       initMap();
       try {
         solarPool = await loadSolarPool();
-        poolHint.textContent = `В реестре ${solarPool.length} СЕС с координатами. На схеме — случайная выборка.`;
+        const src = solarPool.length > 200 ? "полный реестр vde-map" : "локальная выборка";
+        poolHint.textContent = `${solarPool.length} СЕС (${src}). На схеме — случайная выборка.`;
         generateBtn.disabled = false;
         generate();
       } catch (e) {
         poolHint.textContent = "Не удалось загрузить реестр СЕС.";
         showError(e.message || "Ошибка загрузки данных");
+        summaryEl.textContent = "Нет данных";
       }
     })();
   </script>
