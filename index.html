@@ -162,6 +162,48 @@
       pointer-events: none;
     }
 
+    .size-controls {
+      position: absolute;
+      bottom: 12px;
+      left: 16px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255,255,255,0.95);
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      font-size: 12px;
+      color: #444;
+      z-index: 2;
+    }
+
+    .size-controls span.label { font-weight: 600; margin-right: 2px; }
+
+    .size-controls button {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      background: #fff;
+      color: #222;
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .size-controls button:hover { background: #e3f2fd; border-color: #2196F3; color: #1976D2; }
+
+    .size-controls #size-scale-label {
+      min-width: 44px;
+      text-align: center;
+      font-weight: 600;
+      font-size: 13px;
+    }
+
     .graph-wrap { flex: 1; position: relative; min-height: 0; display: flex; flex-direction: column; }
 
     .info-panel {
@@ -310,6 +352,12 @@
     <div class="checks" id="checks"></div>
     <div class="graph-wrap">
       <div id="graph"></div>
+      <div class="size-controls">
+        <span class="label">Шарики</span>
+        <button type="button" id="size-down" title="Уменьшить">−</button>
+        <span id="size-scale-label">180%</span>
+        <button type="button" id="size-up" title="Увеличить">+</button>
+      </div>
       <div class="hint">Клик — вкл/выкл вершину · перетащите вершину · колёсико — масштаб</div>
     </div>
   </main>
@@ -339,6 +387,9 @@
     const btn = document.getElementById("generate-btn");
     const weakestBtn = document.getElementById("weakest-btn");
     const weakestHint = document.getElementById("weakest-hint");
+    const sizeUpBtn = document.getElementById("size-up");
+    const sizeDownBtn = document.getElementById("size-down");
+    const sizeScaleLabel = document.getElementById("size-scale-label");
     const container = document.getElementById("graph");
 
     let network = null;
@@ -354,6 +405,7 @@
     let rebalancing = false;
     let dragStartPointer = null;
     let lastToggleAt = 0;
+    let nodeSizeScale = parseFloat(localStorage.getItem("nodeSizeScale") || "1.8");
 
     const ROLE_COLORS = {
       generator: "#4CAF50",
@@ -473,7 +525,7 @@
         if (!letter) continue;
         const roleColor = nodeRoleColors.get(nodeId(n.id)) || resolveRoleColor(n);
         const size = n.size || 38;
-        const fontSize = Math.max(22, Math.round(size * 0.82));
+        const fontSize = Math.max(18, Math.round(size * 0.82));
         ctx.font = `bold ${fontSize}px Arial, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -495,6 +547,45 @@
       nodes: { borderWidth: 2, borderWidthSelected: 3, chosen: { label: false }, font: { size: 16 } },
       edges: { chosen: false, selectionWidth: 0 },
     };
+
+    function updateSizeScaleLabel() {
+      sizeScaleLabel.textContent = Math.round(nodeSizeScale * 100) + "%";
+    }
+
+    function prepareNodeSizes(rawNodes) {
+      return enrichNodes(rawNodes).map(n => {
+        const baseSize = n.size ?? 38;
+        const baseFont = n.font?.size ?? 16;
+        return {
+          ...n,
+          _baseSize: baseSize,
+          _baseFont: baseFont,
+          size: Math.round(baseSize * nodeSizeScale),
+          font: { ...n.font, size: Math.round(baseFont * nodeSizeScale) },
+        };
+      });
+    }
+
+    function applyNodeSizeScale() {
+      if (!nodesDataset) return;
+      const updates = nodesDataset.get().map(n => ({
+        id: n.id,
+        size: Math.round((n._baseSize ?? n.size ?? 38) * nodeSizeScale),
+        font: {
+          ...(n.font || {}),
+          size: Math.round((n._baseFont ?? 16) * nodeSizeScale),
+        },
+      }));
+      if (updates.length) nodesDataset.update(updates);
+      updateSizeScaleLabel();
+      if (network) network.redraw();
+    }
+
+    function changeNodeSizeScale(delta) {
+      nodeSizeScale = Math.min(3, Math.max(0.5, Math.round((nodeSizeScale + delta) * 10) / 10));
+      localStorage.setItem("nodeSizeScale", String(nodeSizeScale));
+      applyNodeSizeScale();
+    }
 
     function fitGraphView() {
       if (!network) return;
@@ -531,7 +622,7 @@
       for (const n of nodesDataset.get()) {
         const pos = positions[n.id];
         if (!pos) continue;
-        const r = (n.size || 28) + 10;
+        const r = (n.size || 38) + 12;
         const dx = canvas.x - pos.x;
         const dy = canvas.y - pos.y;
         const d2 = dx * dx + dy * dy;
@@ -586,7 +677,7 @@
       const edgeIds = edgesDataset.getIds();
       if (nodeIds.length) nodesDataset.remove(nodeIds);
       if (edgeIds.length) edgesDataset.remove(edgeIds);
-      nodesDataset.add(enrichNodes(data.nodes));
+      nodesDataset.add(prepareNodeSizes(data.nodes));
       edgesDataset.add(data.edges);
       if (network) {
         network.unselectAll();
@@ -665,7 +756,7 @@
       if (network) {
         replaceGraphData(data);
       } else {
-        nodesDataset = new vis.DataSet(enrichNodes(data.nodes));
+        nodesDataset = new vis.DataSet(prepareNodeSizes(data.nodes));
         edgesDataset = new vis.DataSet(data.edges);
         network = new vis.Network(container, { nodes: nodesDataset, edges: edgesDataset }, networkOptions);
         setupNetworkEvents();
@@ -876,6 +967,9 @@
 
     form.addEventListener("submit", e => { e.preventDefault(); generate(); });
     weakestBtn.addEventListener("click", showWeakest);
+    sizeUpBtn.addEventListener("click", () => changeNodeSizeScale(0.2));
+    sizeDownBtn.addEventListener("click", () => changeNodeSizeScale(-0.2));
+    updateSizeScaleLabel();
     updateSurplusHint();
     generate();
   </script>
