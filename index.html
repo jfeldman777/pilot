@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Граф потоков</title>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <script src="graph_core.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "Segoe UI", Arial, sans-serif; height: 100vh; display: flex; background: #f0f2f5; color: #222; }
+
+    .sidebar {
+      width: 300px;
+      min-width: 300px;
+      background: #fff;
+      border-right: 1px solid #ddd;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+
+    .sidebar h1 { font-size: 18px; padding: 16px 16px 8px; }
+    .sidebar p { font-size: 12px; color: #666; padding: 0 16px 12px; }
+
+    form { padding: 0 16px 16px; flex: 1; }
+
+    .field { margin-bottom: 12px; }
+    .field label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: #444; }
+    .field input {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    .field input:focus { outline: none; border-color: #2196F3; box-shadow: 0 0 0 2px rgba(33,150,243,0.15); }
+
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    .surplus-hint {
+      font-size: 12px;
+      color: #555;
+      background: #f7f7f7;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 12px;
+    }
+
+    button {
+      width: 100%;
+      padding: 10px;
+      background: #2196F3;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: #1976D2; }
+    button:disabled { background: #aaa; cursor: wait; }
+    button.secondary {
+      margin-top: 8px;
+      background: #fff;
+      color: #2196F3;
+      border: 1px solid #2196F3;
+    }
+    button.secondary:hover { background: #e3f2fd; }
+    button.secondary:disabled { background: #f5f5f5; color: #aaa; border-color: #ccc; }
+
+    .weakest-hint {
+      font-size: 12px;
+      color: #555;
+      background: #f7f7f7;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+    .weakest-hint.active {
+      background: #fff3e0;
+      color: #e65100;
+      border: 1px solid #ffcc80;
+    }
+
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+    .toolbar {
+      background: #fff;
+      border-bottom: 1px solid #ddd;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .toolbar h2 { font-size: 15px; }
+    .summary { font-size: 13px; color: #555; }
+
+    .legend { display: flex; gap: 16px; font-size: 12px; flex-wrap: wrap; }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #333; }
+    .dot-manual {
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #000;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 9px; font-weight: bold; color: #F44336;
+      border: 1px solid #333;
+    }
+    .dot-failed {
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #bdbdbd;
+      border: 1px solid #888;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 9px; font-weight: bold; color: #F44336;
+      animation: failed-pulse 1.3s ease-in-out infinite;
+    }
+    @keyframes failed-pulse {
+      0%, 100% { opacity: 1; filter: brightness(1); }
+      50% { opacity: 0.55; filter: brightness(0.75); }
+    }
+    .dash { width: 20px; border-bottom: 2px dashed #aaa; }
+
+    .checks {
+      padding: 8px 16px;
+      background: #fafafa;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 11px;
+    }
+    .check { padding: 3px 8px; border-radius: 12px; }
+    .check.ok { background: #e8f5e9; color: #2e7d32; }
+    .check.fail { background: #ffebee; color: #c62828; }
+
+    #graph { flex: 1; background: #fff; min-height: 0; }
+
+    .error {
+      margin: 0 16px 12px;
+      padding: 10px;
+      background: #ffebee;
+      color: #c62828;
+      border-radius: 6px;
+      font-size: 13px;
+      display: none;
+    }
+
+    .hint {
+      position: absolute;
+      bottom: 12px;
+      right: 16px;
+      background: rgba(255,255,255,0.92);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      color: #666;
+      border: 1px solid #ddd;
+      pointer-events: none;
+    }
+
+    .graph-wrap { flex: 1; position: relative; min-height: 0; display: flex; flex-direction: column; }
+
+    .info-panel {
+      width: 280px;
+      min-width: 280px;
+      background: #fff;
+      border-left: 1px solid #ddd;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+
+    .info-panel h2 {
+      font-size: 15px;
+      padding: 16px 16px 8px;
+      border-bottom: 1px solid #eee;
+    }
+
+    .panel-section {
+      padding: 12px 16px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .panel-section h3 {
+      font-size: 12px;
+      font-weight: 600;
+      color: #444;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .panel-section h3 .count {
+      background: #eee;
+      color: #555;
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: 10px;
+      font-weight: 600;
+    }
+
+    .panel-list {
+      list-style: none;
+      font-size: 12px;
+      color: #333;
+    }
+
+    .panel-list li {
+      padding: 4px 0;
+      border-bottom: 1px solid #f5f5f5;
+      line-height: 1.35;
+    }
+
+    .panel-list li:last-child { border-bottom: none; }
+
+    .panel-list .letter {
+      display: inline-block;
+      width: 18px;
+      font-weight: 700;
+      color: #222;
+    }
+
+    .panel-empty {
+      font-size: 12px;
+      color: #999;
+      font-style: italic;
+    }
+
+    .flows-list li {
+      font-family: "Consolas", "Courier New", monospace;
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <aside class="sidebar">
+    <h1>Граф потоков</h1>
+    <p>Параметры генерации</p>
+    <form id="params-form">
+      <div class="field">
+        <label for="n_vertices">Вершин</label>
+        <input type="number" id="n_vertices" name="n_vertices" value="20" min="3" max="26">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="n_generators">Генераторов</label>
+          <input type="number" id="n_generators" name="n_generators" value="5" min="1">
+        </div>
+        <div class="field">
+          <label for="n_consumers">Потребителей</label>
+          <input type="number" id="n_consumers" name="n_consumers" value="10" min="1">
+        </div>
+      </div>
+      <div class="field">
+        <label for="n_transit">Транзитных</label>
+        <input type="number" id="n_transit" name="n_transit" value="5" min="1">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="total_production">Производство</label>
+          <input type="number" id="total_production" name="total_production" value="50" min="1">
+        </div>
+        <div class="field">
+          <label for="total_consumption">Потребление</label>
+          <input type="number" id="total_consumption" name="total_consumption" value="35" min="1">
+        </div>
+      </div>
+      <div class="surplus-hint" id="surplus-hint">Избыток: 15</div>
+      <div class="weakest-hint" id="weakest-hint">Отключение одной вершины — макс. падений потребителей</div>
+      <div class="field-row">
+        <div class="field">
+          <label for="min_degree">Степень min</label>
+          <input type="number" id="min_degree" name="min_degree" value="2" min="1">
+        </div>
+        <div class="field">
+          <label for="max_degree">Степень max</label>
+          <input type="number" id="max_degree" name="max_degree" value="5" min="1">
+        </div>
+      </div>
+      <div class="field">
+        <label for="seed">Seed</label>
+        <input type="number" id="seed" name="seed" value="42">
+      </div>
+      <div class="error" id="error"></div>
+      <button type="submit" id="generate-btn">Сгенерировать</button>
+      <button type="button" id="weakest-btn" class="secondary" disabled>Самая слабая вершина</button>
+    </form>
+  </aside>
+
+  <main class="main">
+    <div class="toolbar">
+      <div>
+        <h2 id="result-title">Результат</h2>
+        <div class="summary" id="summary">Нажмите «Сгенерировать»</div>
+      </div>
+      <div class="legend">
+        <div class="legend-item"><span class="dot" style="background:#4CAF50"></span> Генератор</div>
+        <div class="legend-item"><span class="dot" style="background:#F44336"></span> Потребитель</div>
+        <div class="legend-item"><span class="dot" style="background:#2196F3"></span> Транзит</div>
+        <div class="legend-item"><span class="dot dot-manual">A</span> Отключена кликом (буква цветом типа)</div>
+        <div class="legend-item"><span class="dot dot-failed">A</span> Не обеспечена (мигает, буква цветом типа)</div>
+        <div class="legend-item"><span class="dash"></span> Нулевой поток</div>
+      </div>
+    </div>
+    <div class="checks" id="checks"></div>
+    <div class="graph-wrap">
+      <div id="graph"></div>
+      <div class="hint">Клик — вкл/выкл вершину · перетащите вершину · колёсико — масштаб</div>
+    </div>
+  </main>
+
+  <aside class="info-panel">
+    <h2>Состояние</h2>
+    <div class="panel-section">
+      <h3>Отключены кликом <span class="count" id="manual-count">0</span></h3>
+      <ul class="panel-list" id="manual-list"></ul>
+    </div>
+    <div class="panel-section">
+      <h3>Не обеспечены <span class="count" id="failed-count">0</span></h3>
+      <ul class="panel-list" id="failed-list"></ul>
+    </div>
+    <div class="panel-section">
+      <h3>Активные потоки <span class="count" id="flows-count">0</span></h3>
+      <ul class="panel-list flows-list" id="flows-list"></ul>
+    </div>
+  </aside>
+
+  <script>
+    const form = document.getElementById("params-form");
+    const errorEl = document.getElementById("error");
+    const checksEl = document.getElementById("checks");
+    const summaryEl = document.getElementById("summary");
+    const surplusHint = document.getElementById("surplus-hint");
+    const btn = document.getElementById("generate-btn");
+    const weakestBtn = document.getElementById("weakest-btn");
+    const weakestHint = document.getElementById("weakest-hint");
+    const container = document.getElementById("graph");
+
+    let network = null;
+    let nodesDataset = null;
+    let edgesDataset = null;
+    let graphState = null;
+    let disabledSet = new Set();
+    let didDrag = false;
+    let blinkTimer = null;
+    let blinkPhase = true;
+    let nodeRoleColors = new Map();
+    let eventsBound = false;
+    let rebalancing = false;
+    let dragStartPointer = null;
+    let lastToggleAt = 0;
+
+    const ROLE_COLORS = {
+      generator: "#4CAF50",
+      consumer: "#F44336",
+      transit: "#2196F3",
+    };
+    const INACTIVE_BG = new Set(["#000000", "#bdbdbd", "#8a8a8a", "#111111"]);
+
+    function isManuallyDisabled(n) {
+      return n.disabled_manual || disabledSet.has(nodeId(n.id));
+    }
+
+    function resolveRoleColor(n) {
+      const id = nodeId(n.id);
+      if (n.role_color) return n.role_color;
+      if (n.role && ROLE_COLORS[n.role]) return ROLE_COLORS[n.role];
+      if (graphState?.roles) {
+        const role = graphState.roles[String(id)] ?? graphState.roles[id];
+        if (role && ROLE_COLORS[role]) return ROLE_COLORS[role];
+      }
+      const c = n.color;
+      const bg = c && typeof c === "object" ? c.background : c;
+      if (bg && !INACTIVE_BG.has(bg)) return bg;
+      return ROLE_COLORS.transit;
+    }
+
+    function nodeLetter(n) {
+      return String(n.label || "").split("\n")[0];
+    }
+
+    function hiddenLabelFont(n) {
+      return { ...(n.font || {}), color: "rgba(0,0,0,0)" };
+    }
+
+    function blackNodeColor() {
+      const c = "#000000";
+      return {
+        background: c,
+        border: c,
+        highlight: { background: c, border: c },
+        hover: { background: "#111111", border: "#111111" },
+      };
+    }
+
+    function failedNodeColor(lit) {
+      const bg = lit ? "#bdbdbd" : "#8a8a8a";
+      return {
+        background: bg,
+        border: bg,
+        highlight: { background: bg, border: bg },
+        hover: { background: bg, border: bg },
+      };
+    }
+
+    function stopBlink() {
+      if (blinkTimer) {
+        clearInterval(blinkTimer);
+        blinkTimer = null;
+      }
+    }
+
+    function startBlink() {
+      stopBlink();
+      blinkTimer = setInterval(() => {
+        if (!nodesDataset || !network) return;
+        blinkPhase = !blinkPhase;
+        const updates = [];
+        nodesDataset.get().forEach(n => {
+          if (!n.disabled_failed) return;
+          const id = nodeId(n.id);
+          updates.push({
+            id,
+            color: failedNodeColor(blinkPhase),
+            role_color: resolveRoleColor(n),
+          });
+        });
+        if (updates.length) nodesDataset.update(updates);
+      }, 650);
+    }
+
+    function enrichNodes(nodes) {
+      return nodes.map(n => {
+        const id = nodeId(n.id);
+        const roleColor = resolveRoleColor(n);
+        nodeRoleColors.set(id, roleColor);
+        if (n.disabled_failed) {
+          return {
+            ...n,
+            role: n.role,
+            role_color: roleColor,
+            color: failedNodeColor(true),
+            font: hiddenLabelFont(n),
+          };
+        }
+        if (!isManuallyDisabled(n)) return { ...n, role_color: roleColor };
+        return {
+          ...n,
+          role: n.role,
+          role_color: roleColor,
+          disabled_manual: true,
+          shape: "dot",
+          borderWidth: 2,
+          color: blackNodeColor(),
+          font: hiddenLabelFont(n),
+        };
+      });
+    }
+
+    function drawRoleColoredLetters(ctx) {
+      if (!nodesDataset || !network) return;
+      const positions = network.getPositions();
+      for (const n of nodesDataset.get()) {
+        if (!n.disabled_manual && !n.disabled_failed) continue;
+        const pos = positions[n.id];
+        if (!pos) continue;
+        const letter = nodeLetter(n);
+        if (!letter) continue;
+        const roleColor = nodeRoleColors.get(nodeId(n.id)) || resolveRoleColor(n);
+        const size = n.size || 28;
+        const fontSize = Math.max(20, Math.round(size * 0.82));
+        ctx.font = `bold ${fontSize}px Arial, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = roleColor;
+        ctx.fillText(letter, pos.x, pos.y);
+      }
+    }
+
+    const networkOptions = {
+      physics: { enabled: false },
+      interaction: {
+        dragNodes: true,
+        dragView: true,
+        zoomView: true,
+        hover: true,
+        multiselect: false,
+        selectConnectedEdges: false,
+      },
+      nodes: { borderWidth: 2, borderWidthSelected: 3, chosen: { label: false } },
+      edges: { chosen: false, selectionWidth: 0 },
+    };
+
+    function nodeId(raw) {
+      return typeof raw === "string" ? parseInt(raw, 10) : raw;
+    }
+
+    function toggleNode(rawId) {
+      const id = nodeId(rawId);
+      if (disabledSet.has(id)) disabledSet.delete(id);
+      else disabledSet.add(id);
+      rebalance();
+    }
+
+    function nodeAtPointer(params) {
+      if (params.nodes && params.nodes.length) return nodeId(params.nodes[0]);
+      if (!network || !params.pointer) return null;
+      const canvas = network.DOMtoCanvas(params.pointer.DOM);
+      if (typeof network.getNodesAt === "function") {
+        const hits = network.getNodesAt(canvas);
+        if (hits && hits.length) return nodeId(hits[0]);
+      }
+      const hit = network.getNodeAt(canvas);
+      if (hit !== undefined && hit !== null) return nodeId(hit);
+      const positions = network.getPositions();
+      let best = null;
+      let bestDist = Infinity;
+      for (const n of nodesDataset.get()) {
+        const pos = positions[n.id];
+        if (!pos) continue;
+        const r = (n.size || 28) + 10;
+        const dx = canvas.x - pos.x;
+        const dy = canvas.y - pos.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 <= r * r && d2 < bestDist) {
+          bestDist = d2;
+          best = n.id;
+        }
+      }
+      return best !== null ? nodeId(best) : null;
+    }
+
+    function handleNodeTap(params) {
+      if (didDrag || rebalancing) return;
+      const now = Date.now();
+      if (now - lastToggleAt < 350) return;
+      const id = nodeAtPointer(params);
+      if (id !== null) {
+        lastToggleAt = now;
+        toggleNode(id);
+      }
+    }
+
+    function setupNetworkEvents() {
+      if (eventsBound || !network) return;
+      eventsBound = true;
+
+      network.on("dragStart", params => {
+        didDrag = false;
+        dragStartPointer = params.pointer?.DOM || null;
+      });
+      network.on("dragging", () => { didDrag = true; });
+      network.on("click", params => handleNodeTap(params));
+      network.on("dragEnd", params => {
+        if (didDrag) {
+          didDrag = false;
+          return;
+        }
+        if (rebalancing) return;
+        if (dragStartPointer && params.pointer?.DOM) {
+          const dx = params.pointer.DOM.x - dragStartPointer.x;
+          const dy = params.pointer.DOM.y - dragStartPointer.y;
+          if (dx * dx + dy * dy > 16) return;
+        }
+        handleNodeTap(params);
+      });
+      network.on("afterDrawing", drawRoleColoredLetters);
+    }
+
+    function replaceGraphData(data) {
+      nodeRoleColors = new Map();
+      const nodeIds = nodesDataset.getIds();
+      const edgeIds = edgesDataset.getIds();
+      if (nodeIds.length) nodesDataset.remove(nodeIds);
+      if (edgeIds.length) edgesDataset.remove(edgeIds);
+      nodesDataset.add(enrichNodes(data.nodes));
+      edgesDataset.add(data.edges);
+      if (network) {
+        network.unselectAll();
+        network.redraw();
+      }
+    }
+
+    function getPositions() {
+      if (!network) return null;
+      const pos = network.getPositions();
+      const out = {};
+      for (const [id, p] of Object.entries(pos)) {
+        out[id] = { x: p.x, y: p.y };
+      }
+      return out;
+    }
+
+    function formatSummary(s) {
+      let text = `V=${s.vertices} · рёбер=${s.edges_count} · prod=${s.production} · cons=${s.consumption}`;
+      if (s.disabled_count) text += ` · откл=${s.disabled_count}`;
+      if (s.failed_count) text += ` · не обеспечено=${s.failed_count}`;
+      if (s.served_consumption != null) text += ` · обслужено=${s.served_consumption}`;
+      return text;
+    }
+
+    function updateSurplusHint() {
+      const prod = +document.getElementById("total_production").value || 0;
+      const cons = +document.getElementById("total_consumption").value || 0;
+      surplusHint.textContent = `Избыток: ${prod - cons}`;
+    }
+
+    ["total_production", "total_consumption"].forEach(id => {
+      document.getElementById(id).addEventListener("input", updateSurplusHint);
+    });
+
+    function showError(msg) {
+      errorEl.textContent = msg;
+      errorEl.style.display = msg ? "block" : "none";
+    }
+
+    const ROLE_NAMES = { generator: "генератор", consumer: "потребитель", transit: "транзит" };
+
+    function updateWeakestHint(w) {
+      if (!w) {
+        weakestHint.textContent = "Отключение одной вершины — макс. падений потребителей";
+        weakestHint.className = "weakest-hint";
+        return;
+      }
+      const failedList = (w.failed_letters || []).join(", ");
+      const extra = failedList ? `: ${failedList}` : "";
+      weakestHint.textContent =
+        `Слабая: ${w.letter} (${ROLE_NAMES[w.role] || w.role}) → ${w.failed_count} потребителей${extra}`;
+      weakestHint.className = "weakest-hint active";
+    }
+
+    function applyResult(data) {
+      graphState = data.state;
+      disabledSet = new Set((data.disabled || []).map(nodeId));
+      replaceGraphData(data);
+      renderChecks(data.checks);
+      summaryEl.textContent = formatSummary(data.summary);
+      renderPanel(data);
+      startBlink();
+      if (data.weakest) updateWeakestHint(data.weakest);
+      if (network) network.unselectAll();
+    }
+
+    function applyGraphData(data, resetDisabled) {
+      graphState = data.state;
+      if (resetDisabled) {
+        disabledSet = new Set();
+        nodeRoleColors = new Map();
+      }
+
+      if (network) {
+        replaceGraphData(data);
+      } else {
+        nodesDataset = new vis.DataSet(enrichNodes(data.nodes));
+        edgesDataset = new vis.DataSet(data.edges);
+        network = new vis.Network(container, { nodes: nodesDataset, edges: edgesDataset }, networkOptions);
+        setupNetworkEvents();
+      }
+
+      renderChecks(data.checks);
+      summaryEl.textContent = formatSummary(data.summary);
+      renderPanel(data);
+      startBlink();
+      weakestBtn.disabled = false;
+    }
+
+    async function rebalance() {
+      if (!graphState || rebalancing) return;
+      rebalancing = true;
+      showError("");
+      try {
+        let data;
+        if (typeof GraphCore !== "undefined") {
+          data = GraphCore.rebalance(graphState, [...disabledSet], getPositions());
+        } else {
+          const res = await fetch("/api/rebalance", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              state: graphState,
+              disabled: [...disabledSet],
+              positions: getPositions(),
+            }),
+          });
+          data = await res.json();
+          if (!data.ok) {
+            showError(data.error || "Ошибка перебалансировки");
+            return;
+          }
+        }
+        applyResult(data);
+      } catch (e) {
+        showError(e.message || "Не удалось перебалансировать");
+      } finally {
+        rebalancing = false;
+      }
+    }
+
+    async function showWeakest() {
+      if (!graphState) {
+        showError("Сначала нажмите «Сгенерировать»");
+        return;
+      }
+      showError("");
+      weakestBtn.disabled = true;
+      weakestBtn.textContent = "Поиск…";
+      try {
+        let data;
+        if (typeof GraphCore !== "undefined") {
+          data = GraphCore.showWeakest(graphState, getPositions());
+        } else {
+          const res = await fetch("/api/weakest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              state: graphState,
+              positions: getPositions(),
+            }),
+          });
+          if (res.status === 404) {
+            showError("Сервер без /api/weakest. Перезапустите: python app.py");
+            return;
+          }
+          try {
+            data = await res.json();
+          } catch (_) {
+            showError("Сервер вернул некорректный ответ. Перезапустите: python app.py");
+            return;
+          }
+          if (!data.ok) {
+            showError(data.error || "Ошибка поиска");
+            return;
+          }
+        }
+        applyResult(data);
+      } catch (e) {
+        showError(e.message || "Не удалось найти слабую вершину");
+      } finally {
+        weakestBtn.disabled = false;
+        weakestBtn.textContent = "Самая слабая вершина";
+      }
+    }
+
+    function renderChecks(checks) {
+      checksEl.innerHTML = checks.map(c =>
+        `<span class="check ${c.ok ? "ok" : "fail"}">${c.ok ? "✓" : "✗"} ${c.name}</span>`
+      ).join("");
+    }
+
+    function extractPanel(data) {
+      const nodes = data.nodes || [];
+      const edges = data.edges || [];
+      const manual = [], failed = [], flows = [];
+      for (const n of nodes) {
+        const letter = String(n.label || "").split("\n")[0];
+        const entry = { letter, label: String(n.label || "").replace(/\n/g, " ") };
+        if (n.disabled_manual) manual.push(entry);
+        else if (n.disabled_failed) failed.push(entry);
+      }
+      for (const e of edges) {
+        const lbl = e.label || "";
+        if (lbl && !lbl.endsWith(" 0")) flows.push(lbl);
+      }
+      manual.sort((a, b) => a.letter.localeCompare(b.letter));
+      failed.sort((a, b) => a.letter.localeCompare(b.letter));
+      flows.sort();
+      return { manual_disabled: manual, failed, flows };
+    }
+
+    function renderPanel(data) {
+      const panel = extractPanel(data);
+      const manualList = document.getElementById("manual-list");
+      const failedList = document.getElementById("failed-list");
+      const flowsList = document.getElementById("flows-list");
+      const manualCount = document.getElementById("manual-count");
+      const failedCount = document.getElementById("failed-count");
+      const flowsCount = document.getElementById("flows-count");
+
+      if (!data || !data.nodes) {
+        manualList.innerHTML = '<li class="panel-empty">—</li>';
+        failedList.innerHTML = '<li class="panel-empty">—</li>';
+        flowsList.innerHTML = '<li class="panel-empty">—</li>';
+        manualCount.textContent = "0";
+        failedCount.textContent = "0";
+        flowsCount.textContent = "0";
+        return;
+      }
+
+      const renderItems = (list, items, emptyText) => {
+        if (!items.length) {
+          list.innerHTML = `<li class="panel-empty">${emptyText}</li>`;
+          return;
+        }
+        list.innerHTML = items.map(item =>
+          `<li><span class="letter">${item.letter}</span> ${item.label || item.letter}</li>`
+        ).join("");
+      };
+
+      renderItems(manualList, panel.manual_disabled || [], "Нет");
+      renderItems(failedList, panel.failed || [], "Нет");
+      manualCount.textContent = (panel.manual_disabled || []).length;
+      failedCount.textContent = (panel.failed || []).length;
+
+      const flows = panel.flows || [];
+      flowsCount.textContent = flows.length;
+      if (!flows.length) {
+        flowsList.innerHTML = '<li class="panel-empty">Нет активных потоков</li>';
+      } else {
+        flowsList.innerHTML = flows.map(f => `<li>${f}</li>`).join("");
+      }
+    }
+
+    function getParams() {
+      const fd = new FormData(form);
+      const obj = {};
+      for (const [k, v] of fd.entries()) obj[k] = v;
+      return obj;
+    }
+
+    async function generate() {
+      showError("");
+      btn.disabled = true;
+      btn.textContent = "Генерация…";
+      try {
+        let data;
+        if (typeof GraphCore !== "undefined") {
+          data = GraphCore.generate(getParams());
+        } else {
+          const res = await fetch("/api/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(getParams()),
+          });
+          data = await res.json();
+          if (!data.ok) {
+            showError(data.error || "Неизвестная ошибка");
+            return;
+          }
+          if (!data.state) {
+            showError("Сервер вернул граф без state. Перезапустите: python app.py");
+            return;
+          }
+        }
+        if (network) {
+          stopBlink();
+          eventsBound = false;
+          network.destroy();
+          network = null;
+          nodesDataset = null;
+          edgesDataset = null;
+        }
+        applyGraphData(data, true);
+        updateWeakestHint(null);
+      } catch (e) {
+        showError(e.message || "Не удалось сгенерировать граф");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Сгенерировать";
+      }
+    }
+
+    form.addEventListener("submit", e => { e.preventDefault(); generate(); });
+    weakestBtn.addEventListener("click", showWeakest);
+    updateSurplusHint();
+    generate();
+  </script>
+</body>
+</html>

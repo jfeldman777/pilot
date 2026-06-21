@@ -1,4 +1,4 @@
-"""Локальный сервер: раздаёт статическую версию из docs/."""
+"""Локальный сервер: раздаёт статическую версию из корня проекта."""
 
 import os
 import webbrowser
@@ -6,19 +6,19 @@ from threading import Timer
 
 from flask import Flask, send_from_directory
 
-DOCS = os.path.join(os.path.dirname(__file__), "docs")
+ROOT = os.path.dirname(os.path.abspath(__file__))
 
-app = Flask(__name__, static_folder=DOCS, static_url_path="")
+app = Flask(__name__)
 
 
 @app.get("/")
 def index():
-    return send_from_directory(DOCS, "index.html")
+    return send_from_directory(ROOT, "index.html")
 
 
 @app.get("/<path:path>")
 def static_files(path):
-    return send_from_directory(DOCS, path)
+    return send_from_directory(ROOT, path)
 
 
 def open_browser():
