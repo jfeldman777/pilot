@@ -88,7 +88,10 @@
     }
     .flow-label-icon.zero { color: #999; border-style: dashed; }
 
-    .node-marker {
+    @keyframes failed-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
       width: 26px; height: 26px; border-radius: 50%; border: 2px solid #222;
       display: flex; align-items: center; justify-content: center;
       font-size: 11px; font-weight: bold; color: #fff;
@@ -265,7 +268,7 @@
       });
     }
 
-    function drawGraph(data, focusNode) {
+    function nodeTooltip(node) {
       const letter = String(node.label || "").split("\n")[0];
       const lines = node.label ? node.label.split("\n") : [letter];
       const name = node.station_name ? `<br><i>${node.station_name.slice(0, 60)}</i>` : "";
@@ -273,12 +276,97 @@
       return `<b>${letter}</b> · ${ROLE_NAMES[node.role] || node.role}${name}${ob}<br>${lines.slice(1).join(" ")}`;
     }
 
-    function nodeTooltip(node) {
+    function drawGraph(data, focusNode, fitBounds) {
+      lastData = data;
+      markersLayer.clearLayers();
+      edgesLayer.clearLayers();
+      labelsLayer.clearLayers();
+      markerById.clear();
+
+      const nodeMap = new Map(data.nodes.map(n => [nodeId(n.id), n]));
+
+      for (const e of data.edges) {
+        const from = nodeMap.get(nodeId(e.from));
+        const to = nodeMap.get(nodeId(e.to));
+        if (!from || !to) continue;
+        const off = from.disabled_manual || to.disabled_manual || from.disabled_failed || to.disabled_failed;
+        const zero = !e.label || e.label.endsWith(" 0");
+        const line = L.polyline(
+          [[from.lat, from.lng], [to.lat, to.lng]],
+          {
+            color: off ? "#bbb" : zero ? "#ccc" : "#555",
+            weight: off ? 2 : 3,
+            opacity: off ? 0.5 : 0.75,
+            dashArray: zero || off ? "8 8" : null,
+          }
+        );
+        edgesLayer.addLayer(line);
+
+        const midLat = (from.lat + to.lat) / 2;
+        const midLng = (from.lng + to.lng) / 2;
+        const lbl = L.marker([midLat, midLng], {
+          icon: L.divIcon({
+            className: "",
+            html: `<div class="flow-label-icon${zero ? " zero" : ""}">${e.label || ""}</div>`,
+            iconSize: [0, 0],
+          }),
+          interactive: false,
+        });
+        labelsLayer.addLayer(lbl);
+      }
+
+      for (const node of data.nodes) {
+        const id = nodeId(node.id);
+        const m = L.marker([node.lat, node.lng], {
+          icon: makeNodeIcon(node),
+          draggable: true,
+          riseOnHover: true,
+        });
+        m.bindTooltip(nodeTooltip(node), { direction: "top", offset: [0, -10] });
+        m.on("click", () => {
+          if (rebalancing) return;
+          if (disabledSet.has(id)) disabledSet.delete(id);
+          else disabledSet.add(id);
+          rebalance();
+        });
+        m.on("dragend", () => rebalance());
+        markersLayer.addLayer(m);
+        markerById.set(id, m);
+      }
+
+      if (focusNode !== undefined && focusNode !== null) {
+        const n = nodeMap.get(nodeId(focusNode));
+        if (n) map.setView([n.lat, n.lng], Math.max(map.getZoom(), 8), { animate: true });
+      } else if (fitBounds && data.nodes.length) {
+        const bounds = L.latLngBounds(data.nodes.map(n => [n.lat, n.lng]));
+        map.fitBounds(bounds.pad(0.15));
+      }
+    }
+
+    function stopBlink() {
+      if (blinkTimer) { clearInterval(blinkTimer); blinkTimer = null; }
+    }
+
+    function startBlink() {
+      stopBlink();
+      blinkTimer = setInterval(() => {
+        if (!lastData) return;
+        blinkPhase = !blinkPhase;
+        for (const n of lastData.nodes) {
+          if (!n.disabled_failed) continue;
+          const m = markerById.get(nodeId(n.id));
+          if (!m) continue;
+          m.setIcon(makeNodeIcon(n));
+        }
+      }, 650);
+    }
+
+    function applyResult(data, focusNode, fitBounds) {
       graphState = data.state;
       disabledSet = new Set((data.disabled || []).map(nodeId));
       summaryEl.textContent = formatSummary(data.summary);
       renderPanel(data);
-      drawGraph(data, focusNode);
+      drawGraph(data, focusNode, fitBounds);
       startBlink();
       if (data.weakest) updateWeakestHint(data.weakest);
       weakestBtn.disabled = false;
@@ -290,7 +378,7 @@
       showError("");
       try {
         const data = GraphCore.rebalance(graphState, [...disabledSet], getPositions());
-        applyResult(data);
+        applyResult(data, undefined, false);
       } catch (e) {
         showError(e.message || "Ошибка перебалансировки");
       } finally {
@@ -305,7 +393,7 @@
       weakestBtn.textContent = "Поиск…";
       try {
         const data = GraphCore.showWeakest(graphState, getPositions());
-        applyResult(data, data.weakest?.vertex);
+        applyResult(data, data.weakest?.vertex, false);
       } catch (e) {
         showError(e.message || "Ошибка");
       } finally {
@@ -324,7 +412,7 @@
         const data = GraphCore.generateFromSolarStations(solarPool, { count, seed });
         disabledSet = new Set();
         updateWeakestHint(null);
-        applyResult(data);
+        applyResult(data, undefined, true);
       } catch (e) {
         showError(e.message || "Не удалось построить");
       } finally {

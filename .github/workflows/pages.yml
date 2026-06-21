@@ -24,8 +24,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Prepare static site
         run: |
-          mkdir _site
-          cp index.html graph_core.js .nojekyll _site/
+          mkdir -p _site/data
+          cp index.html map.html graph_core.js .nojekyll _site/
+          cp data/solar_sample.json _site/data/
       - uses: actions/configure-pages@v4
       - uses: actions/upload-pages-artifact@v3
         with:

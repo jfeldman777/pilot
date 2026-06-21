@@ -154,7 +154,7 @@
 
   function stateToJson(state) {
     const p = state.params;
-    return {
+    const out = {
       params: {
         n_vertices: p.n_vertices,
         n_generators: p.n_generators,
@@ -165,16 +165,20 @@
         min_degree: p.min_degree,
         max_degree: p.max_degree,
         seed: p.seed,
+        mode: p.mode || "graph",
       },
       roles: Object.fromEntries(Object.entries(state.roles).map(([k, v]) => [String(k), v])),
       edges: state.edges,
       production: Object.fromEntries(Object.entries(state.production).map(([k, v]) => [String(k), v])),
       consumption: Object.fromEntries(Object.entries(state.consumption).map(([k, v]) => [String(k), v])),
     };
+    if (state.geo) out.geo = state.geo;
+    return out;
   }
 
   function stateFromJson(data) {
     const p = parseParams(data.params);
+    if (data.params?.mode) p.mode = data.params.mode;
     const roles = {};
     for (const [k, v] of Object.entries(data.roles)) roles[+k] = v;
     const production = {};
@@ -187,6 +191,7 @@
       edges: data.edges.map(e => [...e]),
       production,
       consumption,
+      geo: data.geo || null,
     };
   }
 
@@ -269,6 +274,52 @@
       const deg = G.degree(v);
       if (deg < minDeg || deg > maxDeg) {
         throw new Error(`Степень вершины ${LETTERS[v]} = ${deg}, нужно [${minDeg}, ${maxDeg}]`);
+      }
+    }
+    return G;
+  }
+
+  function generateLooseGraph(n, roles, seed) {
+    const rng = new Random(seed);
+    const G = new Graph(n);
+    const order = [...Array(n).keys()];
+    rng.shuffle(order);
+
+    for (let i = 1; i < order.length; i++) {
+      const u = order[i];
+      const prev = order.slice(0, i).filter(v => edgeAllowed(u, v, roles));
+      if (!prev.length) {
+        for (let j = 0; j < i; j++) {
+          if (edgeAllowed(u, order[j], roles)) {
+            G.addEdge(u, order[j]);
+            break;
+          }
+        }
+      } else {
+        G.addEdge(u, rng.choice(prev));
+      }
+    }
+
+    const candidates = [];
+    for (let u = 0; u < n; u++) {
+      for (let v = u + 1; v < n; v++) {
+        if (edgeAllowed(u, v, roles)) candidates.push([u, v]);
+      }
+    }
+    rng.shuffle(candidates);
+    const target = rng.randint(n, Math.max(n, Math.floor(n * 1.8)));
+    for (const [u, v] of candidates) {
+      if (G.edgeCount() >= target) break;
+      if (!G.hasEdge(u, v)) G.addEdge(u, v);
+    }
+
+    if (!G.isConnected()) {
+      for (let u = 0; u < n; u++) {
+        for (let v = u + 1; v < n; v++) {
+          if (!G.isConnected()) {
+            if (edgeAllowed(u, v, roles) && !G.hasEdge(u, v)) G.addEdge(u, v);
+          }
+        }
       }
     }
     return G;
@@ -549,6 +600,131 @@
     return { nodes, edges };
   }
 
+  function resolveGeoPos(v, geo, positions) {
+    if (positions) {
+      const p = positions[String(v)] ?? positions[v];
+      if (p) {
+        const lat = p.lat ?? p.y;
+        const lng = p.lng ?? p.lon ?? p.x;
+        return { lat, lng, x: lng, y: lat };
+      }
+    }
+    const g = geo[String(v)] ?? geo[v];
+    if (!g) return { lat: 0, lng: 0, x: 0, y: 0 };
+    return { lat: g.lat, lng: g.lon, x: g.lon, y: g.lat };
+  }
+
+  function buildMapVisData(G, roles, production, consumption, edgeFlow, surplus, seed, disabled, failed, geo, positions) {
+    disabled = disabled || new Set();
+    failed = failed || new Set();
+    const sizeMap = { generator: 44, consumer: 44, transit: 38 };
+    const edgeFont = 12;
+
+    const nodes = [];
+    for (const v of G.nodes()) {
+      const { lat, lng, x, y } = resolveGeoPos(v, geo, positions);
+      const isOff = disabled.has(v);
+      const isFailed = failed.has(v) && !isOff;
+      let color, fontColor, borderWidth, nodeSize;
+
+      if (isOff) {
+        color = makeBlackNodeColor();
+        fontColor = "#ffffff";
+        borderWidth = 2;
+        nodeSize = sizeMap[roles[v]];
+      } else if (isFailed) {
+        color = makeNodeColor("#bdbdbd");
+        fontColor = "#ffffff";
+        borderWidth = 2;
+        nodeSize = sizeMap[roles[v]];
+      } else {
+        color = makeNodeColor(COLOR[roles[v]]);
+        fontColor = "#ffffff";
+        borderWidth = 2;
+        nodeSize = sizeMap[roles[v]];
+      }
+
+      const g = geo[String(v)] ?? geo[v];
+      const node = {
+        id: v,
+        label: labelForVertex(v, roles, production, consumption, surplus),
+        x,
+        y,
+        lat,
+        lng,
+        color,
+        size: nodeSize,
+        font: { color: fontColor, size: 16, face: "Arial", multi: true, bold: true },
+        borderWidth,
+        disabled_manual: isOff,
+        disabled_failed: isFailed,
+        role: roles[v],
+        role_color: COLOR[roles[v]],
+        station_name: g?.name || "",
+        oblast: g?.oblast || "",
+        station_id: g?.station_id || "",
+      };
+      if (isOff || isFailed) node.chosen = { node: false, label: false };
+      nodes.push(node);
+    }
+
+    const inactive = new Set([...disabled, ...failed]);
+    const edges = [];
+    for (const [u, v] of G.edges) {
+      const a = Math.min(u, v);
+      const b = Math.max(u, v);
+      const offEdge = inactive.has(u) || inactive.has(v);
+      const f = offEdge ? 0 : edgeFlow[`${a},${b}`] || 0;
+      const [frm, to, arrow] = edgeDirection(u, v, f);
+      const zeroFlow = Math.abs(f) < 1e-9;
+      const dashed = offEdge || zeroFlow;
+      const edge = {
+        id: `${u}-${v}`,
+        from: frm,
+        to,
+        label: edgeLabel(u, v, f),
+        font: { size: edgeFont, align: "middle", background: "rgba(255,255,255,0.85)" },
+        color: { color: offEdge ? "#bbbbbb" : zeroFlow ? "#aaaaaa" : "#555555", highlight: "#333333" },
+        width: offEdge ? 2 : 3,
+        dashes: dashed ? [8, 10] : false,
+      };
+      if (arrow && !offEdge) edge.arrows = "to";
+      edges.push(edge);
+    }
+    return { nodes, edges };
+  }
+
+  function runMapChecks(G, roles, production, consumption, surplus, balances, params, disabled, failed) {
+    disabled = disabled || new Set();
+    failed = failed || new Set();
+    const active = new Set(G.nodes().filter(v => !disabled.has(v) && !failed.has(v)));
+
+    let genGen = false;
+    let consCons = false;
+    for (const [u, v] of G.edges) {
+      if (roles[u] === "generator" && roles[v] === "generator") genGen = true;
+      if (roles[u] === "consumer" && roles[v] === "consumer") consCons = true;
+    }
+    const activeBalances = [...active].filter(v => balances[v] !== undefined).map(v => balances[v]);
+    const balOk = activeBalances.length ? activeBalances.every(b => Math.abs(b) < 1e-6) : true;
+
+    const checks = [
+      ["Граф связный", G.isConnected()],
+      [`Сумма генерации = ${params.total_production}`, Object.values(production).reduce((a, b) => a + b, 0) === params.total_production],
+      [`Сумма потребления = ${params.total_consumption}`, Object.values(consumption).reduce((a, b) => a + b, 0) === params.total_consumption],
+      ["Балансы активных вершин сходятся", balOk],
+      ["Источники не связаны между собой", !genGen],
+      ["Потребители не связаны между собой", !consCons],
+    ];
+    if (disabled.size) checks.push([`Отключено вручную: ${disabled.size}`, true]);
+    if (failed.size) checks.push([`Не обеспечены: ${failed.size}`, false]);
+    else if (!disabled.size) {
+      const s = Object.values(surplus).reduce((a, b) => a + b, 0);
+      checks.push([`Сумма surplus = ${params.total_surplus}`, Math.abs(s - params.total_surplus) < 1e-6]);
+    }
+    return checks.map(([name, ok]) => ({ name, ok }));
+  }
+
   function runChecks(G, roles, production, consumption, surplus, balances, params, disabled, failed) {
     disabled = disabled || new Set();
     failed = failed || new Set();
@@ -604,14 +780,22 @@
       G, state.roles, state.production, state.consumption, params.seed, disabled
     );
     const balances = nodeBalance(G, state.production, state.consumption, edgeFlow, surplus);
-    const { nodes, edges } = buildVisData(
-      G, state.roles, state.production, state.consumption,
-      edgeFlow, surplus, params.seed, disabled, failed, positions
-    );
-    const checks = runChecks(
-      G, state.roles, state.production, state.consumption,
-      surplus, balances, params, disabled, failed
-    );
+    const isMap = !!(state.geo && Object.keys(state.geo).length);
+    const { nodes, edges } = isMap
+      ? buildMapVisData(
+          G, state.roles, state.production, state.consumption,
+          edgeFlow, surplus, params.seed, disabled, failed, state.geo, positions
+        )
+      : buildVisData(
+          G, state.roles, state.production, state.consumption,
+          edgeFlow, surplus, params.seed, disabled, failed, positions
+        );
+    const checks = isMap
+      ? runMapChecks(G, state.roles, state.production, state.consumption, surplus, balances, params, disabled, failed)
+      : runChecks(
+          G, state.roles, state.production, state.consumption,
+          surplus, balances, params, disabled, failed
+        );
     let activeConsumption = 0;
     for (const v of G.nodes()) {
       if (state.roles[v] === "consumer" && !disabled.has(v) && !failed.has(v)) {
@@ -663,11 +847,89 @@
     return {
       vertex: bestV,
       letter: LETTERS[bestV],
+      station_name: state.geo?.[String(bestV)]?.name || state.geo?.[bestV]?.name || "",
       role: state.roles[bestV],
       failed_count: bestCount,
       failed: [...bestFailed].sort((a, b) => a - b),
       failed_letters: [...bestFailed].sort((a, b) => a - b).map(f => LETTERS[f]),
     };
+  }
+
+  function pickSolarStations(pool, count, seed) {
+    const rng = new Random(seed);
+    const eligible = pool.filter(s => s.lat != null && s.lon != null);
+    if (eligible.length < count) {
+      throw new Error(`Недостаточно СЕС с координатами: ${eligible.length} из ${count}`);
+    }
+    return rng.sample(eligible, count);
+  }
+
+  function generateFromSolarStations(pool, opts = {}) {
+    const count = +opts.count || 21;
+    const seed = +opts.seed || 42;
+    if (count < 6) throw new Error("Минимум 6 станций");
+    if (count > LETTERS.length) throw new Error(`Максимум ${LETTERS.length} станций на демо`);
+    if (count % 3 !== 0) throw new Error("Число станций должно делиться на 3 (⅓ источники, ⅓ стоки, ⅓ транзит)");
+
+    const stations = pickSolarStations(pool, count, seed);
+    const n = stations.length;
+    const third = n / 3;
+    const roles = assignRoles(n, third, third, seed);
+    const G = generateLooseGraph(n, roles, seed);
+    const rng = new Random(seed);
+
+    const generators = G.nodes().filter(v => roles[v] === "generator");
+    const consumers = G.nodes().filter(v => roles[v] === "consumer");
+    const totalProd = rng.randint(generators.length * 8, generators.length * 45);
+    const totalCons = rng.randint(
+      Math.max(consumers.length, Math.floor(totalProd * 0.5)),
+      Math.max(consumers.length, Math.floor(totalProd * 0.82))
+    );
+
+    const productionList = splitTotal(totalProd, generators.length, rng);
+    const consumptionList = splitTotal(totalCons, consumers.length, rng);
+    const production = {};
+    const consumption = {};
+    generators.forEach((v, i) => (production[v] = productionList[i]));
+    consumers.forEach((v, i) => (consumption[v] = consumptionList[i]));
+
+    const geo = {};
+    stations.forEach((s, i) => {
+      geo[String(i)] = {
+        lat: s.lat,
+        lon: s.lon,
+        name: s.name || `СЕС ${i + 1}`,
+        oblast: s.oblast || "",
+        station_id: s.station_id || `ses-${i}`,
+        capacity_mw: s.capacity_mw ?? null,
+      };
+    });
+
+    const params = {
+      n_vertices: n,
+      n_generators: third,
+      n_consumers: third,
+      n_transit: third,
+      total_production: totalProd,
+      total_consumption: totalCons,
+      min_degree: 1,
+      max_degree: 12,
+      seed,
+      mode: "map",
+      get total_surplus() {
+        return this.total_production - this.total_consumption;
+      },
+    };
+
+    const state = {
+      params,
+      roles,
+      edges: G.edges.map(e => [...e]),
+      production,
+      consumption,
+      geo,
+    };
+    return evaluateState(state, new Set());
   }
 
   function generate(rawParams) {
@@ -708,5 +970,5 @@
     return result;
   }
 
-  global.GraphCore = { generate, rebalance, showWeakest };
+  global.GraphCore = { generate, rebalance, showWeakest, generateFromSolarStations, pickSolarStations };
 })(typeof window !== "undefined" ? window : globalThis);

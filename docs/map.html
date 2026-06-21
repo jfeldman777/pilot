@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Потоки на карте СЕС — Украина</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="graph_core.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "Segoe UI", Arial, sans-serif; height: 100vh; display: flex; background: #f0f2f5; color: #222; }
+
+    .sidebar {
+      width: 300px; min-width: 300px; background: #fff; border-right: 1px solid #ddd;
+      display: flex; flex-direction: column; overflow-y: auto; z-index: 1000;
+    }
+    .sidebar h1 { font-size: 17px; padding: 14px 16px 6px; }
+    .sidebar p { font-size: 12px; color: #666; padding: 0 16px 10px; line-height: 1.4; }
+    .sidebar a { color: #1976D2; font-size: 12px; padding: 0 16px 10px; display: inline-block; }
+
+    form { padding: 0 16px 16px; flex: 1; }
+    .field { margin-bottom: 12px; }
+    .field label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: #444; }
+    .field input, .field select {
+      width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px;
+    }
+    .hint-box {
+      font-size: 11px; color: #555; background: #f7f7f7; border-radius: 6px;
+      padding: 8px 10px; margin-bottom: 12px; line-height: 1.45;
+    }
+    .weakest-hint.active, .hint-box.active { background: #fff3e0; color: #e65100; border: 1px solid #ffcc80; }
+
+    button {
+      width: 100%; padding: 10px; background: #2196F3; color: #fff; border: none;
+      border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer;
+    }
+    button:hover { background: #1976D2; }
+    button:disabled { background: #aaa; cursor: wait; }
+    button.secondary { margin-top: 8px; background: #fff; color: #2196F3; border: 1px solid #2196F3; }
+    button.secondary:hover { background: #e3f2fd; }
+
+    .error { margin-bottom: 12px; padding: 10px; background: #ffebee; color: #c62828; border-radius: 6px; font-size: 13px; display: none; }
+
+    .main { flex: 1; position: relative; min-width: 0; }
+    #map { width: 100%; height: 100%; }
+
+    .panel-toggle {
+      position: absolute; top: 12px; right: 12px; z-index: 1000;
+      padding: 8px 12px; border: 1px solid #ccc; border-radius: 6px;
+      background: rgba(255,255,255,0.95); font-size: 12px; font-weight: 600; cursor: pointer;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+    }
+    .panel-toggle:hover { background: #e3f2fd; border-color: #2196F3; color: #1976D2; }
+
+    .map-legend {
+      position: absolute; bottom: 16px; left: 16px; z-index: 1000;
+      background: rgba(255,255,255,0.95); padding: 10px 12px; border-radius: 8px;
+      border: 1px solid #ddd; font-size: 11px; display: flex; flex-direction: column; gap: 6px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1); pointer-events: none;
+    }
+    .legend-row { display: flex; align-items: center; gap: 8px; }
+    .dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #333; flex-shrink: 0; }
+
+    .info-panel {
+      width: 280px; min-width: 280px; background: #fff; border-left: 1px solid #ddd;
+      overflow-y: auto; z-index: 1000; padding: 14px 16px;
+    }
+    .info-panel h2 { font-size: 15px; margin-bottom: 12px; }
+    .panel-section { margin-bottom: 16px; }
+    .panel-section h3 { font-size: 12px; color: #555; margin-bottom: 6px; }
+    .panel-list { list-style: none; font-size: 12px; max-height: 140px; overflow-y: auto; }
+    .panel-list li { padding: 4px 0; border-bottom: 1px solid #eee; }
+    .count { background: #eee; padding: 1px 6px; border-radius: 10px; font-size: 10px; }
+    .summary-bar {
+      position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 1000;
+      background: rgba(255,255,255,0.95); padding: 8px 14px; border-radius: 8px;
+      border: 1px solid #ddd; font-size: 12px; max-width: 90%; text-align: center;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1); pointer-events: none;
+    }
+
+    body.graph-only .sidebar, body.graph-only .info-panel { display: none !important; }
+
+    .flow-label-icon {
+      background: rgba(255,255,255,0.92); border: 1px solid #bbb; border-radius: 4px;
+      padding: 1px 4px; font-size: 10px; font-weight: 600; color: #333; white-space: nowrap;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+    }
+    .flow-label-icon.zero { color: #999; border-style: dashed; }
+
+    @keyframes failed-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
+      width: 26px; height: 26px; border-radius: 50%; border: 2px solid #222;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: bold; color: #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+    }
+    .node-marker.manual { color: transparent; background: #000 !important; }
+    .node-marker.failed { animation: failed-pulse 1.3s ease-in-out infinite; }
+  </style>
+</head>
+<body>
+  <aside class="sidebar" id="app-sidebar">
+    <h1>Потоки на карте СЕС</h1>
+    <p>Координаты солнечных станций с <a href="https://vde-map.vercel.app/" target="_blank" rel="noopener">карты ВДЕ</a>. ⅓ — источники, ⅓ — стоки, ⅓ — транзит. Связи и мощности — случайно.</p>
+    <a href="index.html">← Абстрактный граф</a>
+    <form id="params-form">
+      <div class="field">
+        <label for="n_stations">Станций на схеме (÷3)</label>
+        <input type="number" id="n_stations" value="21" min="6" max="26" step="3">
+      </div>
+      <div class="field">
+        <label for="seed">Seed</label>
+        <input type="number" id="seed" value="42">
+      </div>
+      <div class="hint-box" id="pool-hint">Загрузка реестра СЕС…</div>
+      <div class="hint-box" id="weakest-hint">Клик по маркеру — вкл/выкл · перетащите маркер</div>
+      <div class="error" id="error"></div>
+      <button type="submit" id="generate-btn" disabled>Построить на карте</button>
+      <button type="button" id="weakest-btn" class="secondary" disabled>Самая слабая вершина</button>
+    </form>
+  </aside>
+
+  <main class="main">
+    <div id="map"></div>
+    <button type="button" id="toggle-panels-btn" class="panel-toggle" title="Скрыть панели">⛶ Граф</button>
+    <div class="summary-bar" id="summary">Загрузка…</div>
+    <div class="map-legend">
+      <div class="legend-row"><span class="dot" style="background:#4CAF50"></span> Источник (генератор)</div>
+      <div class="legend-row"><span class="dot" style="background:#F44336"></span> Сток (потребитель)</div>
+      <div class="legend-row"><span class="dot" style="background:#2196F3"></span> Транзит</div>
+      <div class="legend-row"><span class="dot" style="background:#000"></span> Отключена кликом</div>
+      <div class="legend-row"><span class="dot" style="background:#bdbdbd"></span> Не обеспечена (мигает)</div>
+    </div>
+  </main>
+
+  <aside class="info-panel" id="app-info-panel">
+    <h2>Состояние</h2>
+    <div class="panel-section">
+      <h3>Отключены кликом <span class="count" id="manual-count">0</span></h3>
+      <ul class="panel-list" id="manual-list"></ul>
+    </div>
+    <div class="panel-section">
+      <h3>Не обеспечены <span class="count" id="failed-count">0</span></h3>
+      <ul class="panel-list" id="failed-list"></ul>
+    </div>
+    <div class="panel-section">
+      <h3>Активные потоки <span class="count" id="flows-count">0</span></h3>
+      <ul class="panel-list flows-list" id="flows-list"></ul>
+    </div>
+  </aside>
+
+  <script>
+    const ROLE_COLORS = { generator: "#4CAF50", consumer: "#F44336", transit: "#2196F3" };
+    const ROLE_NAMES = { generator: "источник", consumer: "сток", transit: "транзит" };
+
+    let map = null;
+    let markersLayer = null;
+    let edgesLayer = null;
+    let labelsLayer = null;
+    let markerById = new Map();
+    let graphState = null;
+    let disabledSet = new Set();
+    let solarPool = [];
+    let rebalancing = false;
+    let blinkTimer = null;
+    let blinkPhase = true;
+    let lastData = null;
+
+    const errorEl = document.getElementById("error");
+    const summaryEl = document.getElementById("summary");
+    const poolHint = document.getElementById("pool-hint");
+    const weakestHint = document.getElementById("weakest-hint");
+    const generateBtn = document.getElementById("generate-btn");
+    const weakestBtn = document.getElementById("weakest-btn");
+    const togglePanelsBtn = document.getElementById("toggle-panels-btn");
+    const form = document.getElementById("params-form");
+
+    function nodeId(raw) {
+      return typeof raw === "string" ? parseInt(raw, 10) : raw;
+    }
+
+    function showError(msg) {
+      errorEl.textContent = msg;
+      errorEl.style.display = msg ? "block" : "none";
+    }
+
+    function formatSummary(s) {
+      let t = `Станций=${s.vertices} · рёбер=${s.edges_count} · prod=${s.production} · cons=${s.consumption} МВт`;
+      if (s.disabled_count) t += ` · откл=${s.disabled_count}`;
+      if (s.failed_count) t += ` · не обеспечено=${s.failed_count}`;
+      return t;
+    }
+
+    function renderPanel(data) {
+      const panel = data.panel || {};
+      document.getElementById("manual-count").textContent = (panel.manual_disabled || []).length;
+      document.getElementById("failed-count").textContent = (panel.failed || []).length;
+      document.getElementById("flows-count").textContent = (panel.flows || []).length;
+      document.getElementById("manual-list").innerHTML = (panel.manual_disabled || [])
+        .map(x => `<li><b>${x.letter}</b> ${x.label}</li>`).join("") || "<li>—</li>";
+      document.getElementById("failed-list").innerHTML = (panel.failed || [])
+        .map(x => `<li><b>${x.letter}</b> ${x.label}</li>`).join("") || "<li>—</li>";
+      document.getElementById("flows-list").innerHTML = (panel.flows || [])
+        .map(x => `<li>${x}</li>`).join("") || "<li>—</li>";
+    }
+
+    function updateWeakestHint(w) {
+      if (!w) {
+        weakestHint.textContent = "Клик по маркеру — вкл/выкл · перетащите маркер";
+        weakestHint.className = "hint-box";
+        return;
+      }
+      const name = w.station_name ? ` «${w.station_name.slice(0, 28)}»` : "";
+      const extra = (w.failed_letters || []).join(", ");
+      weakestHint.textContent =
+        `Слабая: ${w.letter}${name} (${ROLE_NAMES[w.role] || w.role}) → ${w.failed_count} стоков${extra ? ": " + extra : ""}`;
+      weakestHint.className = "hint-box active";
+    }
+
+    function getPositions() {
+      const out = {};
+      for (const [id, m] of markerById) {
+        const ll = m.getLatLng();
+        out[id] = { lat: ll.lat, lng: ll.lng };
+      }
+      return out;
+    }
+
+    function initMap() {
+      if (map) return;
+      map = L.map("map", { zoomControl: true }).setView([48.5, 31.2], 6);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+        maxZoom: 18,
+      }).addTo(map);
+      markersLayer = L.layerGroup().addTo(map);
+      edgesLayer = L.layerGroup().addTo(map);
+      labelsLayer = L.layerGroup().addTo(map);
+    }
+
+    function markerHtml(node) {
+      const letter = String(node.label || "A").split("\n")[0];
+      const id = nodeId(node.id);
+      let bg = ROLE_COLORS[node.role] || "#888";
+      let cls = "node-marker";
+      let text = letter;
+      if (node.disabled_manual) {
+        bg = "#000";
+        cls += " manual";
+        text = `<span style="color:${node.role_color || ROLE_COLORS[node.role]}">${letter}</span>`;
+      } else if (node.disabled_failed) {
+        bg = blinkPhase ? "#bdbdbd" : "#8a8a8a";
+        cls += " failed";
+        text = `<span style="color:${node.role_color || ROLE_COLORS[node.role]}">${letter}</span>`;
+      }
+      return `<div class="${cls}" style="background:${bg}">${text}</div>`;
+    }
+
+    function makeNodeIcon(node) {
+      return L.divIcon({
+        className: "",
+        html: markerHtml(node),
+        iconSize: [26, 26],
+        iconAnchor: [13, 13],
+      });
+    }
+
+    function nodeTooltip(node) {
+      const letter = String(node.label || "").split("\n")[0];
+      const lines = node.label ? node.label.split("\n") : [letter];
+      const name = node.station_name ? `<br><i>${node.station_name.slice(0, 60)}</i>` : "";
+      const ob = node.oblast ? `<br><small>${node.oblast}</small>` : "";
+      return `<b>${letter}</b> · ${ROLE_NAMES[node.role] || node.role}${name}${ob}<br>${lines.slice(1).join(" ")}`;
+    }
+
+    function drawGraph(data, focusNode, fitBounds) {
+      lastData = data;
+      markersLayer.clearLayers();
+      edgesLayer.clearLayers();
+      labelsLayer.clearLayers();
+      markerById.clear();
+
+      const nodeMap = new Map(data.nodes.map(n => [nodeId(n.id), n]));
+
+      for (const e of data.edges) {
+        const from = nodeMap.get(nodeId(e.from));
+        const to = nodeMap.get(nodeId(e.to));
+        if (!from || !to) continue;
+        const off = from.disabled_manual || to.disabled_manual || from.disabled_failed || to.disabled_failed;
+        const zero = !e.label || e.label.endsWith(" 0");
+        const line = L.polyline(
+          [[from.lat, from.lng], [to.lat, to.lng]],
+          {
+            color: off ? "#bbb" : zero ? "#ccc" : "#555",
+            weight: off ? 2 : 3,
+            opacity: off ? 0.5 : 0.75,
+            dashArray: zero || off ? "8 8" : null,
+          }
+        );
+        edgesLayer.addLayer(line);
+
+        const midLat = (from.lat + to.lat) / 2;
+        const midLng = (from.lng + to.lng) / 2;
+        const lbl = L.marker([midLat, midLng], {
+          icon: L.divIcon({
+            className: "",
+            html: `<div class="flow-label-icon${zero ? " zero" : ""}">${e.label || ""}</div>`,
+            iconSize: [0, 0],
+          }),
+          interactive: false,
+        });
+        labelsLayer.addLayer(lbl);
+      }
+
+      for (const node of data.nodes) {
+        const id = nodeId(node.id);
+        const m = L.marker([node.lat, node.lng], {
+          icon: makeNodeIcon(node),
+          draggable: true,
+          riseOnHover: true,
+        });
+        m.bindTooltip(nodeTooltip(node), { direction: "top", offset: [0, -10] });
+        m.on("click", () => {
+          if (rebalancing) return;
+          if (disabledSet.has(id)) disabledSet.delete(id);
+          else disabledSet.add(id);
+          rebalance();
+        });
+        m.on("dragend", () => rebalance());
+        markersLayer.addLayer(m);
+        markerById.set(id, m);
+      }
+
+      if (focusNode !== undefined && focusNode !== null) {
+        const n = nodeMap.get(nodeId(focusNode));
+        if (n) map.setView([n.lat, n.lng], Math.max(map.getZoom(), 8), { animate: true });
+      } else if (fitBounds && data.nodes.length) {
+        const bounds = L.latLngBounds(data.nodes.map(n => [n.lat, n.lng]));
+        map.fitBounds(bounds.pad(0.15));
+      }
+    }
+
+    function stopBlink() {
+      if (blinkTimer) { clearInterval(blinkTimer); blinkTimer = null; }
+    }
+
+    function startBlink() {
+      stopBlink();
+      blinkTimer = setInterval(() => {
+        if (!lastData) return;
+        blinkPhase = !blinkPhase;
+        for (const n of lastData.nodes) {
+          if (!n.disabled_failed) continue;
+          const m = markerById.get(nodeId(n.id));
+          if (!m) continue;
+          m.setIcon(makeNodeIcon(n));
+        }
+      }, 650);
+    }
+
+    function applyResult(data, focusNode, fitBounds) {
+      graphState = data.state;
+      disabledSet = new Set((data.disabled || []).map(nodeId));
+      summaryEl.textContent = formatSummary(data.summary);
+      renderPanel(data);
+      drawGraph(data, focusNode, fitBounds);
+      startBlink();
+      if (data.weakest) updateWeakestHint(data.weakest);
+      weakestBtn.disabled = false;
+    }
+
+    async function rebalance() {
+      if (!graphState || rebalancing) return;
+      rebalancing = true;
+      showError("");
+      try {
+        const data = GraphCore.rebalance(graphState, [...disabledSet], getPositions());
+        applyResult(data, undefined, false);
+      } catch (e) {
+        showError(e.message || "Ошибка перебалансировки");
+      } finally {
+        rebalancing = false;
+      }
+    }
+
+    async function showWeakest() {
+      if (!graphState) return;
+      showError("");
+      weakestBtn.disabled = true;
+      weakestBtn.textContent = "Поиск…";
+      try {
+        const data = GraphCore.showWeakest(graphState, getPositions());
+        applyResult(data, data.weakest?.vertex, false);
+      } catch (e) {
+        showError(e.message || "Ошибка");
+      } finally {
+        weakestBtn.disabled = false;
+        weakestBtn.textContent = "Самая слабая вершина";
+      }
+    }
+
+    function generate() {
+      showError("");
+      const count = +document.getElementById("n_stations").value;
+      const seed = +document.getElementById("seed").value;
+      generateBtn.disabled = true;
+      generateBtn.textContent = "Построение…";
+      try {
+        const data = GraphCore.generateFromSolarStations(solarPool, { count, seed });
+        disabledSet = new Set();
+        updateWeakestHint(null);
+        applyResult(data, undefined, true);
+      } catch (e) {
+        showError(e.message || "Не удалось построить");
+      } finally {
+        generateBtn.disabled = false;
+        generateBtn.textContent = "Построить на карте";
+      }
+    }
+
+    function loadSolarPool() {
+      return new Promise((resolve, reject) => {
+        if (typeof ALL_STATIONS !== "undefined") {
+          resolve(ALL_STATIONS.filter(s => s.type === "solar" && s.lat != null && s.lon != null));
+          return;
+        }
+        const s = document.createElement("script");
+        s.src = "https://vde-map.vercel.app/all_stations.js";
+        s.async = true;
+        s.onload = () => {
+          if (typeof ALL_STATIONS === "undefined") {
+            reject(new Error("ALL_STATIONS не найден"));
+            return;
+          }
+          resolve(ALL_STATIONS.filter(st => st.type === "solar" && st.lat != null && st.lon != null));
+        };
+        s.onerror = () => {
+          fetch("data/solar_sample.json")
+            .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+            .then(resolve)
+            .catch(reject);
+        };
+        document.head.appendChild(s);
+      });
+    }
+
+    function setGraphOnlyMode(on) {
+      document.body.classList.toggle("graph-only", on);
+      togglePanelsBtn.textContent = on ? "⊞ Панели" : "⛶ Граф";
+      togglePanelsBtn.title = on ? "Показать панели" : "Скрыть панели";
+      localStorage.setItem("mapGraphOnly", on ? "1" : "0");
+      setTimeout(() => map && map.invalidateSize(), 120);
+    }
+
+    form.addEventListener("submit", e => { e.preventDefault(); generate(); });
+    weakestBtn.addEventListener("click", showWeakest);
+    togglePanelsBtn.addEventListener("click", () => setGraphOnlyMode(!document.body.classList.contains("graph-only")));
+    if (localStorage.getItem("mapGraphOnly") === "1") setGraphOnlyMode(true);
+
+    (async () => {
+      initMap();
+      try {
+        solarPool = await loadSolarPool();
+        poolHint.textContent = `В реестре ${solarPool.length} СЕС с координатами. На схеме — случайная выборка.`;
+        generateBtn.disabled = false;
+        generate();
+      } catch (e) {
+        poolHint.textContent = "Не удалось загрузить реестр СЕС.";
+        showError(e.message || "Ошибка загрузки данных");
+      }
+    })();
+  </script>
+</body>
+</html>
