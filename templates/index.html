@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Граф потоков</title>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "Segoe UI", Arial, sans-serif; height: 100vh; display: flex; background: #f0f2f5; color: #222; }
+
+    .sidebar {
+      width: 300px;
+      min-width: 300px;
+      background: #fff;
+      border-right: 1px solid #ddd;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+
+    .sidebar h1 { font-size: 18px; padding: 16px 16px 8px; }
+    .sidebar p { font-size: 12px; color: #666; padding: 0 16px 12px; }
+
+    form { padding: 0 16px 16px; flex: 1; }
+
+    .field { margin-bottom: 12px; }
+    .field label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: #444; }
+    .field input {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    .field input:focus { outline: none; border-color: #2196F3; box-shadow: 0 0 0 2px rgba(33,150,243,0.15); }
+
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    .surplus-hint {
+      font-size: 12px;
+      color: #555;
+      background: #f7f7f7;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 12px;
+    }
+
+    button {
+      width: 100%;
+      padding: 10px;
+      background: #2196F3;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: #1976D2; }
+    button:disabled { background: #aaa; cursor: wait; }
+
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+    .toolbar {
+      background: #fff;
+      border-bottom: 1px solid #ddd;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .toolbar h2 { font-size: 15px; }
+    .summary { font-size: 13px; color: #555; }
+
+    .legend { display: flex; gap: 16px; font-size: 12px; flex-wrap: wrap; }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #333; }
+    .dot-manual {
+      width: 12px; height: 12px; border-radius: 50%;
+      background: linear-gradient(to right, #000 50%, #4CAF50 50%);
+      border: 1px solid #333;
+    }
+    .dot-failed { background: #bdbdbd; border-color: #888; }
+    .dash { width: 20px; border-bottom: 2px dashed #aaa; }
+
+    .checks {
+      padding: 8px 16px;
+      background: #fafafa;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 11px;
+    }
+    .check { padding: 3px 8px; border-radius: 12px; }
+    .check.ok { background: #e8f5e9; color: #2e7d32; }
+    .check.fail { background: #ffebee; color: #c62828; }
+
+    #graph { flex: 1; background: #fff; min-height: 0; }
+
+    .error {
+      margin: 0 16px 12px;
+      padding: 10px;
+      background: #ffebee;
+      color: #c62828;
+      border-radius: 6px;
+      font-size: 13px;
+      display: none;
+    }
+
+    .hint {
+      position: absolute;
+      bottom: 12px;
+      right: 16px;
+      background: rgba(255,255,255,0.92);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      color: #666;
+      border: 1px solid #ddd;
+      pointer-events: none;
+    }
+
+    .graph-wrap { flex: 1; position: relative; min-height: 0; display: flex; flex-direction: column; }
+  </style>
+</head>
+<body>
+  <aside class="sidebar">
+    <h1>Граф потоков</h1>
+    <p>Параметры генерации</p>
+    <form id="params-form">
+      <div class="field">
+        <label for="n_vertices">Вершин</label>
+        <input type="number" id="n_vertices" name="n_vertices" value="20" min="3" max="26">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="n_generators">Генераторов</label>
+          <input type="number" id="n_generators" name="n_generators" value="5" min="1">
+        </div>
+        <div class="field">
+          <label for="n_consumers">Потребителей</label>
+          <input type="number" id="n_consumers" name="n_consumers" value="10" min="1">
+        </div>
+      </div>
+      <div class="field">
+        <label for="n_transit">Транзитных</label>
+        <input type="number" id="n_transit" name="n_transit" value="5" min="1">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="total_production">Производство</label>
+          <input type="number" id="total_production" name="total_production" value="50" min="1">
+        </div>
+        <div class="field">
+          <label for="total_consumption">Потребление</label>
+          <input type="number" id="total_consumption" name="total_consumption" value="35" min="1">
+        </div>
+      </div>
+      <div class="surplus-hint" id="surplus-hint">Избыток: 15</div>
+      <div class="field-row">
+        <div class="field">
+          <label for="min_degree">Степень min</label>
+          <input type="number" id="min_degree" name="min_degree" value="2" min="1">
+        </div>
+        <div class="field">
+          <label for="max_degree">Степень max</label>
+          <input type="number" id="max_degree" name="max_degree" value="5" min="1">
+        </div>
+      </div>
+      <div class="field">
+        <label for="seed">Seed</label>
+        <input type="number" id="seed" name="seed" value="42">
+      </div>
+      <div class="error" id="error"></div>
+      <button type="submit" id="generate-btn">Сгенерировать</button>
+    </form>
+  </aside>
+
+  <main class="main">
+    <div class="toolbar">
+      <div>
+        <h2 id="result-title">Результат</h2>
+        <div class="summary" id="summary">Нажмите «Сгенерировать»</div>
+      </div>
+      <div class="legend">
+        <div class="legend-item"><span class="dot" style="background:#4CAF50"></span> Генератор</div>
+        <div class="legend-item"><span class="dot" style="background:#F44336"></span> Потребитель</div>
+        <div class="legend-item"><span class="dot" style="background:#2196F3"></span> Транзит</div>
+        <div class="legend-item"><span class="dot dot-manual"></span> Отключена кликом (двуцветная)</div>
+        <div class="legend-item"><span class="dot dot-failed"></span> Не обеспечена (сама)</div>
+        <div class="legend-item"><span class="dash"></span> Нулевой поток</div>
+      </div>
+    </div>
+    <div class="checks" id="checks"></div>
+    <div class="graph-wrap">
+      <div id="graph"></div>
+      <div class="hint">Клик — вкл/выкл вершину · перетащите вершину · колёсико — масштаб</div>
+    </div>
+  </main>
+
+  <script>
+    const form = document.getElementById("params-form");
+    const errorEl = document.getElementById("error");
+    const checksEl = document.getElementById("checks");
+    const summaryEl = document.getElementById("summary");
+    const surplusHint = document.getElementById("surplus-hint");
+    const btn = document.getElementById("generate-btn");
+    const container = document.getElementById("graph");
+
+    let network = null;
+    let nodesDataset = null;
+    let edgesDataset = null;
+    let graphState = null;
+    let disabledSet = new Set();
+    let didDrag = false;
+    let lastTap = 0;
+
+    function halfNodeImage(roleColor) {
+      const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
+        `<circle cx="32" cy="32" r="31" fill="${roleColor}"/>` +
+        `<path d="M32 32 L32 2 A30 30 0 0 0 32 62 Z" fill="#000"/>` +
+        `<circle cx="32" cy="32" r="31" fill="none" stroke="#222" stroke-width="2"/>` +
+        `</svg>`;
+      return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    }
+
+    function enrichNodes(nodes) {
+      return nodes.map(n => {
+        if (!n.disabled_manual) return n;
+        const img = halfNodeImage(n.role_color || "#888888");
+        return {
+          ...n,
+          shape: "circularImage",
+          image: img,
+          brokenImage: img,
+          color: { border: "#222222", highlight: { border: "#222222" } },
+        };
+      });
+    }
+
+    const networkOptions = {
+      physics: { enabled: false },
+      interaction: {
+        dragNodes: true,
+        dragView: true,
+        zoomView: true,
+        hover: true,
+        multiselect: false,
+        selectConnectedEdges: false,
+      },
+      nodes: { borderWidth: 2, borderWidthSelected: 3, chosen: { label: false } },
+      edges: { chosen: false, selectionWidth: 0 },
+    };
+
+    function nodeId(raw) {
+      return typeof raw === "string" ? parseInt(raw, 10) : raw;
+    }
+
+    function toggleNode(rawId) {
+      const id = nodeId(rawId);
+      if (disabledSet.has(id)) disabledSet.delete(id);
+      else disabledSet.add(id);
+      rebalance();
+    }
+
+    function nodeAtPointer(params) {
+      if (params.nodes && params.nodes.length) return nodeId(params.nodes[0]);
+      if (!network || !params.pointer) return null;
+      const canvas = network.DOMtoCanvas(params.pointer.DOM);
+      const hit = network.getNodeAt(canvas);
+      return hit !== undefined ? nodeId(hit) : null;
+    }
+
+    function setupNetworkEvents() {
+      network.on("dragStart", () => { didDrag = false; });
+      network.on("dragging", () => { didDrag = true; });
+      network.on("click", params => {
+        if (didDrag) return;
+        const now = Date.now();
+        if (now - lastTap < 300) return;
+        lastTap = now;
+        const id = nodeAtPointer(params);
+        if (id !== null) toggleNode(id);
+      });
+    }
+
+    function replaceGraphData(data) {
+      const nodeIds = nodesDataset.getIds();
+      const edgeIds = edgesDataset.getIds();
+      if (nodeIds.length) nodesDataset.remove(nodeIds);
+      if (edgeIds.length) edgesDataset.remove(edgeIds);
+      nodesDataset.add(enrichNodes(data.nodes));
+      edgesDataset.add(data.edges);
+      if (network) {
+        network.unselectAll();
+        network.redraw();
+      }
+    }
+
+    function getPositions() {
+      if (!network) return null;
+      const pos = network.getPositions();
+      const out = {};
+      for (const [id, p] of Object.entries(pos)) {
+        out[id] = { x: p.x, y: p.y };
+      }
+      return out;
+    }
+
+    function formatSummary(s) {
+      let text = `V=${s.vertices} · рёбер=${s.edges_count} · prod=${s.production} · cons=${s.consumption}`;
+      if (s.disabled_count) text += ` · откл=${s.disabled_count}`;
+      if (s.failed_count) text += ` · не обеспечено=${s.failed_count}`;
+      if (s.served_consumption != null) text += ` · обслужено=${s.served_consumption}`;
+      return text;
+    }
+
+    function updateSurplusHint() {
+      const prod = +document.getElementById("total_production").value || 0;
+      const cons = +document.getElementById("total_consumption").value || 0;
+      surplusHint.textContent = `Избыток: ${prod - cons}`;
+    }
+
+    ["total_production", "total_consumption"].forEach(id => {
+      document.getElementById(id).addEventListener("input", updateSurplusHint);
+    });
+
+    function showError(msg) {
+      errorEl.textContent = msg;
+      errorEl.style.display = msg ? "block" : "none";
+    }
+
+    function applyGraphData(data, resetDisabled) {
+      graphState = data.state;
+      if (resetDisabled) disabledSet = new Set();
+
+      if (network) {
+        replaceGraphData(data);
+      } else {
+        nodesDataset = new vis.DataSet(enrichNodes(data.nodes));
+        edgesDataset = new vis.DataSet(data.edges);
+        network = new vis.Network(container, { nodes: nodesDataset, edges: edgesDataset }, networkOptions);
+        setupNetworkEvents();
+      }
+
+      renderChecks(data.checks);
+      summaryEl.textContent = formatSummary(data.summary);
+    }
+
+    async function rebalance() {
+      if (!graphState) return;
+      showError("");
+      try {
+        const res = await fetch("/api/rebalance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            state: graphState,
+            disabled: [...disabledSet],
+            positions: getPositions(),
+          }),
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          showError(data.error || "Ошибка перебалансировки");
+          return;
+        }
+        graphState = data.state;
+        disabledSet = new Set(data.disabled.map(nodeId));
+        replaceGraphData(data);
+        renderChecks(data.checks);
+        summaryEl.textContent = formatSummary(data.summary);
+      } catch (e) {
+        showError("Не удалось перебалансировать");
+      }
+    }
+
+    function renderChecks(checks) {
+      checksEl.innerHTML = checks.map(c =>
+        `<span class="check ${c.ok ? "ok" : "fail"}">${c.ok ? "✓" : "✗"} ${c.name}</span>`
+      ).join("");
+    }
+
+    function getParams() {
+      const fd = new FormData(form);
+      const obj = {};
+      for (const [k, v] of fd.entries()) obj[k] = v;
+      return obj;
+    }
+
+    async function generate() {
+      showError("");
+      btn.disabled = true;
+      btn.textContent = "Генерация…";
+      try {
+        const res = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(getParams()),
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          showError(data.error || "Неизвестная ошибка");
+          return;
+        }
+        if (!data.state) {
+          showError("Сервер вернул граф без state. Остановите сервер (Ctrl+C) и запустите: python app.py");
+          return;
+        }
+        if (network) {
+          network.destroy();
+          network = null;
+          nodesDataset = null;
+          edgesDataset = null;
+        }
+        applyGraphData(data, true);
+      } catch (e) {
+        showError("Не удалось связаться с сервером");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Сгенерировать";
+      }
+    }
+
+    form.addEventListener("submit", e => { e.preventDefault(); generate(); });
+    updateSurplusHint();
+    generate();
+  </script>
+</body>
+</html>
