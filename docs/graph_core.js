@@ -279,6 +279,116 @@
     return G;
   }
 
+  function haversineKm(a, b) {
+    const R = 6371;
+    const toRad = d => (d * Math.PI) / 180;
+    const dLat = toRad(b.lat - a.lat);
+    const dLon = toRad(b.lon - a.lon);
+    const la1 = toRad(a.lat);
+    const la2 = toRad(b.lat);
+    const h =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+
+  function weightedChoice(items, weights, rng) {
+    if (!items.length) return null;
+    const total = weights.reduce((a, b) => a + b, 0);
+    if (total <= 1e-12) return rng.choice(items);
+    let r = rng.random() * total;
+    for (let i = 0; i < items.length; i++) {
+      r -= weights[i];
+      if (r <= 0) return items[i];
+    }
+    return items[items.length - 1];
+  }
+
+  function geoEdgeWeight(distKm, scaleKm) {
+    return Math.exp(-distKm / scaleKm);
+  }
+
+  function medianGeoScale(n, roles, geo) {
+    const dists = [];
+    for (let u = 0; u < n; u++) {
+      for (let v = u + 1; v < n; v++) {
+        if (!edgeAllowed(u, v, roles)) continue;
+        const gu = geo[String(u)] ?? geo[u];
+        const gv = geo[String(v)] ?? geo[v];
+        if (!gu || !gv) continue;
+        dists.push(haversineKm(gu, gv));
+      }
+    }
+    if (!dists.length) return 120;
+    dists.sort((a, b) => a - b);
+    return dists[Math.floor(dists.length / 2)] || 120;
+  }
+
+  function generateGeoGraph(n, roles, geo, seed) {
+    const rng = new Random(seed);
+    const G = new Graph(n);
+    const dist = (u, v) => {
+      const gu = geo[String(u)] ?? geo[u];
+      const gv = geo[String(v)] ?? geo[v];
+      return haversineKm(gu, gv);
+    };
+    const scale = medianGeoScale(n, roles, geo);
+
+    const order = [...Array(n).keys()];
+    rng.shuffle(order);
+    const inTree = new Set([order[0]]);
+
+    for (let i = 1; i < order.length; i++) {
+      const u = order[i];
+      let candidates = [...inTree].filter(v => edgeAllowed(u, v, roles));
+      if (!candidates.length) {
+        candidates = G.nodes().filter(v => v !== u && edgeAllowed(u, v, roles));
+      }
+      if (!candidates.length) continue;
+      const weights = candidates.map(v => geoEdgeWeight(dist(u, v), scale));
+      G.addEdge(u, weightedChoice(candidates, weights, rng));
+      inTree.add(u);
+    }
+
+    const extras = [];
+    const extraWeights = [];
+    for (let u = 0; u < n; u++) {
+      for (let v = u + 1; v < n; v++) {
+        if (edgeAllowed(u, v, roles) && !G.hasEdge(u, v)) {
+          extras.push([u, v]);
+          extraWeights.push(geoEdgeWeight(dist(u, v), scale));
+        }
+      }
+    }
+
+    const target = rng.randint(n, Math.max(n, Math.floor(n * 1.8)));
+    const ranked = extras
+      .map((edge, i) => ({
+        edge,
+        w: extraWeights[i],
+        tie: rng.random(),
+      }))
+      .sort((a, b) => b.w + b.tie * 0.15 - (a.w + a.tie * 0.15));
+
+    for (const { edge: [u, v], w } of ranked) {
+      if (G.edgeCount() >= target) break;
+      const p = Math.min(0.95, 0.25 + w * 1.4);
+      if (rng.random() < p) G.addEdge(u, v);
+    }
+
+    if (!G.isConnected()) {
+      const bridge = extras
+        .map(([u, v], i) => ({ u, v, d: dist(u, v) }))
+        .filter(({ u, v }) => !G.hasEdge(u, v))
+        .sort((a, b) => a.d - b.d);
+      for (const { u, v } of bridge) {
+        if (G.isConnected()) break;
+        G.addEdge(u, v);
+      }
+    }
+    return G;
+  }
+
   function generateLooseGraph(n, roles, seed) {
     const rng = new Random(seed);
     const G = new Graph(n);
@@ -875,7 +985,20 @@
     const n = stations.length;
     const third = n / 3;
     const roles = assignRoles(n, third, third, seed);
-    const G = generateLooseGraph(n, roles, seed);
+
+    const geo = {};
+    stations.forEach((s, i) => {
+      geo[String(i)] = {
+        lat: s.lat,
+        lon: s.lon,
+        name: s.name || `СЕС ${i + 1}`,
+        oblast: s.oblast || "",
+        station_id: s.station_id || `ses-${i}`,
+        capacity_mw: s.capacity_mw ?? null,
+      };
+    });
+
+    const G = generateGeoGraph(n, roles, geo, seed);
     const rng = new Random(seed);
 
     const generators = G.nodes().filter(v => roles[v] === "generator");
@@ -892,18 +1015,6 @@
     const consumption = {};
     generators.forEach((v, i) => (production[v] = productionList[i]));
     consumers.forEach((v, i) => (consumption[v] = consumptionList[i]));
-
-    const geo = {};
-    stations.forEach((s, i) => {
-      geo[String(i)] = {
-        lat: s.lat,
-        lon: s.lon,
-        name: s.name || `СЕС ${i + 1}`,
-        oblast: s.oblast || "",
-        station_id: s.station_id || `ses-${i}`,
-        capacity_mw: s.capacity_mw ?? null,
-      };
-    });
 
     const params = {
       n_vertices: n,
