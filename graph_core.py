@@ -345,12 +345,9 @@ def build_vis_data(
     failed = failed or set()
     default_pos = nx.spring_layout(G, seed=seed, k=max(1.8, 3.0 / max(len(G.nodes), 1)), iterations=80)
     n = len(G.nodes)
-    scale = 350 if n <= 6 else 600
-    if n <= 6:
-        size_map = {"generator": 42, "consumer": 42, "transit": 36}
-    else:
-        size_map = {"generator": 28, "consumer": 28, "transit": 22}
-    edge_font = 10 if n <= 6 else 11
+    scale = 280 if n <= 6 else 260
+    size_map = {"generator": 44, "consumer": 44, "transit": 38}
+    edge_font = 12 if n <= 6 else 13
 
     nodes = []
     for v in G.nodes:

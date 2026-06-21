@@ -277,10 +277,41 @@
       font-family: "Consolas", "Courier New", monospace;
       font-size: 11px;
     }
+
+    .panel-toggle {
+      position: absolute;
+      top: 12px;
+      right: 16px;
+      z-index: 10;
+      padding: 8px 12px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      background: rgba(255,255,255,0.95);
+      color: #333;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+
+    .panel-toggle:hover { background: #e3f2fd; border-color: #2196F3; color: #1976D2; }
+
+    body.graph-only .sidebar,
+    body.graph-only .info-panel,
+    body.graph-only .toolbar,
+    body.graph-only .checks,
+    body.graph-only .hint { display: none !important; }
+
+    body.graph-only .main { flex: 1; width: 100%; }
+
+    body.graph-only .panel-toggle {
+      top: 12px;
+      right: 12px;
+    }
   </style>
 </head>
 <body>
-  <aside class="sidebar">
+  <aside class="sidebar" id="app-sidebar">
     <h1>Граф потоков</h1>
     <p>Параметры генерации</p>
     <form id="params-form">
@@ -334,8 +365,8 @@
     </form>
   </aside>
 
-  <main class="main">
-    <div class="toolbar">
+  <main class="main" id="app-main">
+    <div class="toolbar" id="app-toolbar">
       <div>
         <h2 id="result-title">Результат</h2>
         <div class="summary" id="summary">Нажмите «Сгенерировать»</div>
@@ -351,18 +382,19 @@
     </div>
     <div class="checks" id="checks"></div>
     <div class="graph-wrap">
+      <button type="button" id="toggle-panels-btn" class="panel-toggle" title="Скрыть панели">⛶ Граф</button>
       <div id="graph"></div>
       <div class="size-controls">
         <span class="label">Шарики</span>
         <button type="button" id="size-down" title="Уменьшить">−</button>
-        <span id="size-scale-label">180%</span>
+        <span id="size-scale-label">300%</span>
         <button type="button" id="size-up" title="Увеличить">+</button>
       </div>
       <div class="hint">Клик — вкл/выкл вершину · перетащите вершину · колёсико — масштаб</div>
     </div>
   </main>
 
-  <aside class="info-panel">
+  <aside class="info-panel" id="app-info-panel">
     <h2>Состояние</h2>
     <div class="panel-section">
       <h3>Отключены кликом <span class="count" id="manual-count">0</span></h3>
@@ -390,6 +422,7 @@
     const sizeUpBtn = document.getElementById("size-up");
     const sizeDownBtn = document.getElementById("size-down");
     const sizeScaleLabel = document.getElementById("size-scale-label");
+    const togglePanelsBtn = document.getElementById("toggle-panels-btn");
     const container = document.getElementById("graph");
 
     let network = null;
@@ -405,7 +438,8 @@
     let rebalancing = false;
     let dragStartPointer = null;
     let lastToggleAt = 0;
-    let nodeSizeScale = parseFloat(localStorage.getItem("nodeSizeScale") || "1.8");
+    let clickHandledAt = 0;
+    let nodeSizeScale = parseFloat(localStorage.getItem("nodeSizeScale") || "3");
 
     const ROLE_COLORS = {
       generator: "#4CAF50",
@@ -589,10 +623,57 @@
 
     function fitGraphView() {
       if (!network) return;
-      network.fit({ animation: false });
-      if (network.getScale() < 0.55) {
-        network.moveTo({ scale: 0.55, animation: false });
+      network.fit({ animation: false, padding: 48 });
+      const s = network.getScale();
+      if (s < 0.8) {
+        network.moveTo({ scale: 0.8, animation: false });
       }
+    }
+
+    function captureGraphView() {
+      if (!network) return null;
+      try {
+        return { scale: network.getScale(), position: network.getViewPosition() };
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function restoreGraphView(view) {
+      if (!network || !view) return;
+      network.moveTo({ scale: view.scale, position: view.position, animation: false });
+    }
+
+    function focusOnNode(vid, zoomScale) {
+      if (!network || vid === undefined || vid === null) return;
+      const id = nodeId(vid);
+      setTimeout(() => {
+        try {
+          network.focus(id, {
+            scale: zoomScale || 1.15,
+            animation: { duration: 480, easingFunction: "easeInOutQuad" },
+          });
+        } catch (_) { /* ignore */ }
+      }, 80);
+    }
+
+    function refreshNetworkLayout(preserveView) {
+      if (!network) return;
+      const view = preserveView ? captureGraphView() : null;
+      network.setSize(`${container.offsetWidth}px`, `${container.offsetHeight}px`);
+      if (view) restoreGraphView(view);
+    }
+
+    function setGraphOnlyMode(on) {
+      document.body.classList.toggle("graph-only", on);
+      togglePanelsBtn.textContent = on ? "⊞ Панели" : "⛶ Граф";
+      togglePanelsBtn.title = on ? "Показать панели" : "Скрыть панели";
+      localStorage.setItem("graphOnly", on ? "1" : "0");
+      setTimeout(() => refreshNetworkLayout(true), 80);
+    }
+
+    function toggleGraphOnlyMode() {
+      setGraphOnlyMode(!document.body.classList.contains("graph-only"));
     }
 
     function nodeId(raw) {
@@ -654,13 +735,17 @@
         dragStartPointer = params.pointer?.DOM || null;
       });
       network.on("dragging", () => { didDrag = true; });
-      network.on("click", params => handleNodeTap(params));
+      network.on("click", params => {
+        clickHandledAt = Date.now();
+        handleNodeTap(params);
+      });
       network.on("dragEnd", params => {
         if (didDrag) {
           didDrag = false;
           return;
         }
         if (rebalancing) return;
+        if (Date.now() - clickHandledAt < 200) return;
         if (dragStartPointer && params.pointer?.DOM) {
           const dx = params.pointer.DOM.x - dragStartPointer.x;
           const dy = params.pointer.DOM.y - dragStartPointer.y;
@@ -671,7 +756,13 @@
       network.on("afterDrawing", drawRoleColoredLetters);
     }
 
-    function replaceGraphData(data) {
+    function replaceGraphData(data, opts) {
+      opts = opts || {};
+      const shouldFit = opts.fit === true;
+      const shouldFocus = opts.focusNode !== undefined;
+      const shouldPreserve = opts.preserveView === true;
+      const savedView = shouldPreserve ? captureGraphView() : null;
+
       nodeRoleColors = new Map();
       const nodeIds = nodesDataset.getIds();
       const edgeIds = edgesDataset.getIds();
@@ -682,7 +773,13 @@
       if (network) {
         network.unselectAll();
         network.redraw();
-        fitGraphView();
+        if (shouldFocus) {
+          focusOnNode(opts.focusNode, opts.focusScale || 1.2);
+        } else if (shouldFit) {
+          fitGraphView();
+        } else if (savedView) {
+          restoreGraphView(savedView);
+        }
       }
     }
 
@@ -737,13 +834,16 @@
     function applyResult(data) {
       graphState = data.state;
       disabledSet = new Set((data.disabled || []).map(nodeId));
-      replaceGraphData(data);
+      const focusOpts = data.weakest
+        ? { focusNode: data.weakest.vertex, focusScale: 1.25 }
+        : { preserveView: true };
+      replaceGraphData(data, focusOpts);
       renderChecks(data.checks);
       summaryEl.textContent = formatSummary(data.summary);
       renderPanel(data);
       startBlink();
       if (data.weakest) updateWeakestHint(data.weakest);
-      if (network) network.unselectAll();
+      if (network && !data.weakest) network.unselectAll();
     }
 
     function applyGraphData(data, resetDisabled) {
@@ -754,13 +854,14 @@
       }
 
       if (network) {
-        replaceGraphData(data);
+        replaceGraphData(data, { fit: true });
       } else {
         nodesDataset = new vis.DataSet(prepareNodeSizes(data.nodes));
         edgesDataset = new vis.DataSet(data.edges);
         network = new vis.Network(container, { nodes: nodesDataset, edges: edgesDataset }, networkOptions);
         setupNetworkEvents();
         fitGraphView();
+        refreshNetworkLayout(true);
       }
 
       renderChecks(data.checks);
@@ -969,6 +1070,9 @@
     weakestBtn.addEventListener("click", showWeakest);
     sizeUpBtn.addEventListener("click", () => changeNodeSizeScale(0.2));
     sizeDownBtn.addEventListener("click", () => changeNodeSizeScale(-0.2));
+    togglePanelsBtn.addEventListener("click", toggleGraphOnlyMode);
+    window.addEventListener("resize", () => refreshNetworkLayout(true));
+    setGraphOnlyMode(localStorage.getItem("graphOnly") !== "0");
     updateSizeScaleLabel();
     updateSurplusHint();
     generate();
