@@ -9,7 +9,8 @@
   <script src="graph_core.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: "Segoe UI", Arial, sans-serif; height: 100vh; display: flex; background: #f0f2f5; color: #222; }
+    html, body { height: 100%; }
+    body { font-family: "Segoe UI", Arial, sans-serif; height: 100vh; display: flex; background: #f0f2f5; color: #222; overflow: hidden; }
 
     .sidebar {
       width: 300px; min-width: 300px; background: #fff; border-right: 1px solid #ddd;
@@ -42,8 +43,8 @@
 
     .error { margin-bottom: 12px; padding: 10px; background: #ffebee; color: #c62828; border-radius: 6px; font-size: 13px; display: none; }
 
-    .main { flex: 1; position: relative; min-width: 0; }
-    #map { width: 100%; height: 100%; }
+    .main { flex: 1; position: relative; min-width: 0; min-height: 0; }
+    #leaflet-map { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; background: #dde4ea; }
 
     .panel-toggle {
       position: absolute; top: 12px; right: 12px; z-index: 1000;
@@ -92,6 +93,7 @@
       0%, 100% { opacity: 1; }
       50% { opacity: 0.45; }
     }
+    .node-marker {
       width: 26px; height: 26px; border-radius: 50%; border: 2px solid #222;
       display: flex; align-items: center; justify-content: center;
       font-size: 11px; font-weight: bold; color: #fff;
@@ -124,7 +126,7 @@
   </aside>
 
   <main class="main">
-    <div id="map"></div>
+    <div id="leaflet-map"></div>
     <button type="button" id="toggle-panels-btn" class="panel-toggle" title="Скрыть панели">⛶ Граф</button>
     <div class="summary-bar" id="summary">Загрузка…</div>
     <div class="map-legend">
@@ -156,7 +158,7 @@
     const ROLE_COLORS = { generator: "#4CAF50", consumer: "#F44336", transit: "#2196F3" };
     const ROLE_NAMES = { generator: "источник", consumer: "сток", transit: "транзит" };
 
-    let map = null;
+    let leafletMap = null;
     let markersLayer = null;
     let edgesLayer = null;
     let labelsLayer = null;
@@ -230,15 +232,16 @@
     }
 
     function initMap() {
-      if (map) return;
-      map = L.map("map", { zoomControl: true }).setView([48.5, 31.2], 6);
+      if (leafletMap) return;
+      leafletMap = L.map("leaflet-map", { zoomControl: true }).setView([48.5, 31.2], 6);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
         maxZoom: 18,
-      }).addTo(map);
-      markersLayer = L.layerGroup().addTo(map);
-      edgesLayer = L.layerGroup().addTo(map);
-      labelsLayer = L.layerGroup().addTo(map);
+      }).addTo(leafletMap);
+      markersLayer = L.layerGroup().addTo(leafletMap);
+      edgesLayer = L.layerGroup().addTo(leafletMap);
+      labelsLayer = L.layerGroup().addTo(leafletMap);
+      setTimeout(() => leafletMap.invalidateSize(), 100);
     }
 
     function markerHtml(node) {
@@ -336,10 +339,10 @@
 
       if (focusNode !== undefined && focusNode !== null) {
         const n = nodeMap.get(nodeId(focusNode));
-        if (n) map.setView([n.lat, n.lng], Math.max(map.getZoom(), 8), { animate: true });
+        if (n) leafletMap.setView([n.lat, n.lng], Math.max(leafletMap.getZoom(), 8), { animate: true });
       } else if (fitBounds && data.nodes.length) {
         const bounds = L.latLngBounds(data.nodes.map(n => [n.lat, n.lng]));
-        map.fitBounds(bounds.pad(0.15));
+        leafletMap.fitBounds(bounds.pad(0.15));
       }
     }
 
