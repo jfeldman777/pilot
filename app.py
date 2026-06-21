@@ -6,7 +6,7 @@ from threading import Timer
 
 from flask import Flask, jsonify, render_template, request
 
-from graph_core import GraphParams, GraphState, generate_graph, rebalance_graph
+from graph_core import GraphParams, GraphState, generate_graph, rebalance_graph, show_weakest_case
 
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
@@ -56,6 +56,22 @@ def api_rebalance():
         return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:
         return jsonify({"ok": False, "error": f"Ошибка перебалансировки: {exc}"}), 500
+
+
+@app.post("/api/weakest")
+def api_weakest():
+    data = request.get_json(silent=True) or {}
+    try:
+        if "state" not in data:
+            return jsonify({"ok": False, "error": "Нет state — нажмите «Сгенерировать» заново"}), 400
+        state = GraphState.from_json(data["state"])
+        positions = data.get("positions")
+        result = show_weakest_case(state, positions)
+        return jsonify({"ok": True, **result})
+    except (ValueError, TypeError, KeyError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Ошибка поиска слабой вершины: {exc}"}), 500
 
 
 def open_browser():

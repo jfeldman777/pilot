@@ -488,6 +488,42 @@ def build_panel(nodes: list[dict], edges: list[dict]) -> dict:
     return {"manual_disabled": manual, "failed": auto_failed, "flows": flows}
 
 
+def find_weakest_vertex(state: GraphState) -> dict:
+    """Вершина, при отключении которой падает максимум потребителей."""
+    G = state.to_graph()
+    params = state.params
+    best_v = 0
+    best_failed: set[int] = set()
+    best_count = -1
+
+    for v in G.nodes:
+        _, _, failed = compute_flows(
+            G, state.roles, state.production, state.consumption, params.seed, {v}
+        )
+        failed_consumers = {f for f in failed if state.roles[f] == "consumer"}
+        count = len(failed_consumers)
+        if count > best_count or (count == best_count and LETTERS[v] < LETTERS[best_v]):
+            best_v = v
+            best_failed = failed_consumers
+            best_count = count
+
+    return {
+        "vertex": best_v,
+        "letter": LETTERS[best_v],
+        "role": state.roles[best_v],
+        "failed_count": best_count,
+        "failed": sorted(best_failed),
+        "failed_letters": [LETTERS[f] for f in sorted(best_failed)],
+    }
+
+
+def show_weakest_case(state: GraphState, positions: dict | None = None) -> dict:
+    weakest = find_weakest_vertex(state)
+    result = _evaluate_state(state, {weakest["vertex"]}, positions)
+    result["weakest"] = weakest
+    return result
+
+
 def _evaluate_state(
     state: GraphState,
     disabled: set[int] | None = None,

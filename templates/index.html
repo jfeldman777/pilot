@@ -59,6 +59,29 @@
     }
     button:hover { background: #1976D2; }
     button:disabled { background: #aaa; cursor: wait; }
+    button.secondary {
+      margin-top: 8px;
+      background: #fff;
+      color: #2196F3;
+      border: 1px solid #2196F3;
+    }
+    button.secondary:hover { background: #e3f2fd; }
+    button.secondary:disabled { background: #f5f5f5; color: #aaa; border-color: #ccc; }
+
+    .weakest-hint {
+      font-size: 12px;
+      color: #555;
+      background: #f7f7f7;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+    .weakest-hint.active {
+      background: #fff3e0;
+      color: #e65100;
+      border: 1px solid #ffcc80;
+    }
 
     .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
@@ -247,6 +270,7 @@
         </div>
       </div>
       <div class="surplus-hint" id="surplus-hint">Избыток: 15</div>
+      <div class="weakest-hint" id="weakest-hint">Отключение одной вершины — макс. падений потребителей</div>
       <div class="field-row">
         <div class="field">
           <label for="min_degree">Степень min</label>
@@ -263,6 +287,7 @@
       </div>
       <div class="error" id="error"></div>
       <button type="submit" id="generate-btn">Сгенерировать</button>
+      <button type="button" id="weakest-btn" class="secondary" disabled>Самая слабая вершина</button>
     </form>
   </aside>
 
@@ -311,6 +336,8 @@
     const summaryEl = document.getElementById("summary");
     const surplusHint = document.getElementById("surplus-hint");
     const btn = document.getElementById("generate-btn");
+    const weakestBtn = document.getElementById("weakest-btn");
+    const weakestHint = document.getElementById("weakest-hint");
     const container = document.getElementById("graph");
 
     let network = null;
@@ -319,10 +346,13 @@
     let graphState = null;
     let disabledSet = new Set();
     let didDrag = false;
-    let lastTap = 0;
     let blinkTimer = null;
     let blinkPhase = true;
     let nodeRoleColors = new Map();
+    let eventsBound = false;
+    let rebalancing = false;
+    let dragStartPointer = null;
+    let lastToggleAt = 0;
 
     const ROLE_COLORS = {
       generator: "#4CAF50",
@@ -480,20 +510,63 @@
       if (params.nodes && params.nodes.length) return nodeId(params.nodes[0]);
       if (!network || !params.pointer) return null;
       const canvas = network.DOMtoCanvas(params.pointer.DOM);
+      if (typeof network.getNodesAt === "function") {
+        const hits = network.getNodesAt(canvas);
+        if (hits && hits.length) return nodeId(hits[0]);
+      }
       const hit = network.getNodeAt(canvas);
-      return hit !== undefined ? nodeId(hit) : null;
+      if (hit !== undefined && hit !== null) return nodeId(hit);
+      const positions = network.getPositions();
+      let best = null;
+      let bestDist = Infinity;
+      for (const n of nodesDataset.get()) {
+        const pos = positions[n.id];
+        if (!pos) continue;
+        const r = (n.size || 28) + 10;
+        const dx = canvas.x - pos.x;
+        const dy = canvas.y - pos.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 <= r * r && d2 < bestDist) {
+          bestDist = d2;
+          best = n.id;
+        }
+      }
+      return best !== null ? nodeId(best) : null;
+    }
+
+    function handleNodeTap(params) {
+      if (didDrag || rebalancing) return;
+      const now = Date.now();
+      if (now - lastToggleAt < 350) return;
+      const id = nodeAtPointer(params);
+      if (id !== null) {
+        lastToggleAt = now;
+        toggleNode(id);
+      }
     }
 
     function setupNetworkEvents() {
-      network.on("dragStart", () => { didDrag = false; });
+      if (eventsBound || !network) return;
+      eventsBound = true;
+
+      network.on("dragStart", params => {
+        didDrag = false;
+        dragStartPointer = params.pointer?.DOM || null;
+      });
       network.on("dragging", () => { didDrag = true; });
-      network.on("click", params => {
-        if (didDrag) return;
-        const now = Date.now();
-        if (now - lastTap < 300) return;
-        lastTap = now;
-        const id = nodeAtPointer(params);
-        if (id !== null) toggleNode(id);
+      network.on("click", params => handleNodeTap(params));
+      network.on("dragEnd", params => {
+        if (didDrag) {
+          didDrag = false;
+          return;
+        }
+        if (rebalancing) return;
+        if (dragStartPointer && params.pointer?.DOM) {
+          const dx = params.pointer.DOM.x - dragStartPointer.x;
+          const dy = params.pointer.DOM.y - dragStartPointer.y;
+          if (dx * dx + dy * dy > 16) return;
+        }
+        handleNodeTap(params);
       });
       network.on("afterDrawing", drawRoleColoredLetters);
     }
@@ -545,6 +618,33 @@
       errorEl.style.display = msg ? "block" : "none";
     }
 
+    const ROLE_NAMES = { generator: "генератор", consumer: "потребитель", transit: "транзит" };
+
+    function updateWeakestHint(w) {
+      if (!w) {
+        weakestHint.textContent = "Отключение одной вершины — макс. падений потребителей";
+        weakestHint.className = "weakest-hint";
+        return;
+      }
+      const failedList = (w.failed_letters || []).join(", ");
+      const extra = failedList ? `: ${failedList}` : "";
+      weakestHint.textContent =
+        `Слабая: ${w.letter} (${ROLE_NAMES[w.role] || w.role}) → ${w.failed_count} потребителей${extra}`;
+      weakestHint.className = "weakest-hint active";
+    }
+
+    function applyResult(data) {
+      graphState = data.state;
+      disabledSet = new Set((data.disabled || []).map(nodeId));
+      replaceGraphData(data);
+      renderChecks(data.checks);
+      summaryEl.textContent = formatSummary(data.summary);
+      renderPanel(data);
+      startBlink();
+      if (data.weakest) updateWeakestHint(data.weakest);
+      if (network) network.unselectAll();
+    }
+
     function applyGraphData(data, resetDisabled) {
       graphState = data.state;
       if (resetDisabled) {
@@ -565,10 +665,12 @@
       summaryEl.textContent = formatSummary(data.summary);
       renderPanel(data);
       startBlink();
+      weakestBtn.disabled = false;
     }
 
     async function rebalance() {
-      if (!graphState) return;
+      if (!graphState || rebalancing) return;
+      rebalancing = true;
       showError("");
       try {
         const res = await fetch("/api/rebalance", {
@@ -585,14 +687,52 @@
           showError(data.error || "Ошибка перебалансировки");
           return;
         }
-        graphState = data.state;
-        disabledSet = new Set(data.disabled.map(nodeId));
-        replaceGraphData(data);
-        renderChecks(data.checks);
-        summaryEl.textContent = formatSummary(data.summary);
-        renderPanel(data);
+        applyResult(data);
       } catch (e) {
         showError("Не удалось перебалансировать");
+      } finally {
+        rebalancing = false;
+      }
+    }
+
+    async function showWeakest() {
+      if (!graphState) {
+        showError("Сначала нажмите «Сгенерировать»");
+        return;
+      }
+      showError("");
+      weakestBtn.disabled = true;
+      weakestBtn.textContent = "Поиск…";
+      try {
+        const res = await fetch("/api/weakest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            state: graphState,
+            positions: getPositions(),
+          }),
+        });
+        if (res.status === 404) {
+          showError("Сервер без /api/weakest. Остановите (Ctrl+C) и запустите: python app.py");
+          return;
+        }
+        let data;
+        try {
+          data = await res.json();
+        } catch (_) {
+          showError("Сервер вернул некорректный ответ. Перезапустите: python app.py");
+          return;
+        }
+        if (!data.ok) {
+          showError(data.error || "Ошибка поиска");
+          return;
+        }
+        applyResult(data);
+      } catch (e) {
+        showError("Не удалось связаться с сервером. Запустите: python app.py");
+      } finally {
+        weakestBtn.disabled = false;
+        weakestBtn.textContent = "Самая слабая вершина";
       }
     }
 
@@ -693,12 +833,14 @@
         }
         if (network) {
           stopBlink();
+          eventsBound = false;
           network.destroy();
           network = null;
           nodesDataset = null;
           edgesDataset = null;
         }
         applyGraphData(data, true);
+        updateWeakestHint(null);
       } catch (e) {
         showError("Не удалось связаться с сервером");
       } finally {
@@ -708,6 +850,7 @@
     }
 
     form.addEventListener("submit", e => { e.preventDefault(); generate(); });
+    weakestBtn.addEventListener("click", showWeakest);
     updateSurplusHint();
     generate();
   </script>
