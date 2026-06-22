@@ -4,6 +4,9 @@
 
   const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   const COLOR = { generator: "#4CAF50", consumer: "#F44336", transit: "#2196F3" };
+  const PRIORITY_RANK = { critical: 0, important: 1, normal: 2, flexible: 3 };
+  const CAPACITY_BLOCK_MW = 10;
+  const DEFAULT_EDGE_CAPACITY = 1e9;
 
   class Random {
     constructor(seed) {
@@ -184,6 +187,10 @@
     };
     if (state.geo) out.geo = state.geo;
     if (state.passport) out.passport = state.passport;
+    if (state.edge_capacity) out.edge_capacity = { ...state.edge_capacity };
+    if (state.priority) out.priority = Object.fromEntries(Object.entries(state.priority).map(([k, v]) => [String(k), v]));
+    if (state.reinforced_edges?.length) out.reinforced_edges = [...state.reinforced_edges];
+    if (state.new_edges?.length) out.new_edges = [...state.new_edges];
     if (state.disabled_edges?.length) out.disabled_edges = state.disabled_edges.map(e => [...e]);
     return out;
   }
@@ -226,6 +233,10 @@
       consumption,
       geo: data.geo || null,
       passport: data.passport || null,
+      edge_capacity: data.edge_capacity || null,
+      priority: data.priority ? Object.fromEntries(Object.entries(data.priority).map(([k, v]) => [+k, v])) : null,
+      reinforced_edges: data.reinforced_edges || [],
+      new_edges: data.new_edges || [],
       disabled_edges: (data.disabled_edges || []).map(e => [...e]),
     };
   }
@@ -494,7 +505,146 @@
     return roles;
   }
 
-  function computeFlows(G, roles, production, consumption, seed, disabled = new Set(), disabledEdges = new Set()) {
+  function getEdgeCapacityMw(edgeCapacity, u, v) {
+    if (!edgeCapacity) return DEFAULT_EDGE_CAPACITY;
+    const k = edgeKey(u, v);
+    const c = edgeCapacity[k];
+    return c != null && c > 0 ? c : DEFAULT_EDGE_CAPACITY;
+  }
+
+  function assignSyntheticEdgeCapacities(G, state, seed) {
+    const rng = new Random((seed >>> 0) + 99);
+    const cap = {};
+    for (const [u, v] of G.edges) {
+      const tight = rng.random() < 0.38;
+      cap[edgeKey(u, v)] = tight ? rng.randint(5, 14) : rng.randint(16, 42);
+    }
+    return cap;
+  }
+
+  function assignConsumerPriorities(state, seed) {
+    const rng = new Random((seed >>> 0) + 101);
+    const pri = {};
+    const consumers = Object.keys(state.roles).map(Number).filter(v => state.roles[v] === "consumer");
+    for (const v of consumers) {
+      const r = rng.random();
+      if (r < 0.22) pri[v] = "critical";
+      else if (r < 0.48) pri[v] = "important";
+      else if (r < 0.78) pri[v] = "normal";
+      else pri[v] = "flexible";
+    }
+    if (consumers.length && !Object.values(pri).includes("critical")) pri[consumers[0]] = "critical";
+    return pri;
+  }
+
+  function initCapacityState(state, seed) {
+    const G = stateToGraph(state);
+    if (!state.edge_capacity) state.edge_capacity = assignSyntheticEdgeCapacities(G, state, seed);
+    if (!state.priority) state.priority = assignConsumerPriorities(state, seed);
+    state.passport = {
+      coords: state.passport?.coords || (state.geo ? "OPEN_DATA" : "SYNTHETIC"),
+      links: "SYNTHETIC",
+      capacity: "SYNTHETIC",
+      model: "MATHEMATICAL_SCREENING",
+      ...state.passport,
+    };
+    if (!state.reinforced_edges) state.reinforced_edges = [];
+    if (!state.new_edges) state.new_edges = [];
+    return state;
+  }
+
+  function maxPushAmount(u, v, edgeFlow, edgeCapacity) {
+    const key = edgeKey(u, v);
+    const cap = getEdgeCapacityMw(edgeCapacity, u, v);
+    const f = edgeFlow[key] || 0;
+    const sign = u < v ? 1 : -1;
+    const hi = cap - sign * f;
+    const lo = -cap - sign * f;
+    const loPos = Math.max(0, lo);
+    const hiPos = Math.max(0, hi);
+    if (loPos > hiPos + 1e-9) return 0;
+    return hiPos;
+  }
+
+  function maxPushOnPath(path, edgeFlow, edgeCapacity) {
+    let m = Infinity;
+    for (let i = 0; i < path.length - 1; i++) {
+      m = Math.min(m, maxPushAmount(path[i], path[i + 1], edgeFlow, edgeCapacity));
+    }
+    return m === Infinity ? 0 : m;
+  }
+
+  function analyzeFeasibility(G, state, edgeFlow, failed, served, edgeCapacity, priorities) {
+    let capacityViolations = 0;
+    let maxLoading = 0;
+    for (const [u, v] of G.edges) {
+      const key = edgeKey(u, v);
+      const f = edgeFlow[key] || 0;
+      const cap = getEdgeCapacityMw(edgeCapacity, u, v);
+      const loading = cap > 0 ? (Math.abs(f) / cap) * 100 : 0;
+      if (Math.abs(f) > cap + 1e-6) capacityViolations++;
+      maxLoading = Math.max(maxLoading, loading);
+    }
+    let criticalTotal = 0;
+    let criticalServed = 0;
+    let criticalUnserved = 0;
+    let servedTotal = 0;
+    let unservedTotal = 0;
+    for (const v of G.nodes()) {
+      if (state.roles[v] !== "consumer") continue;
+      const demand = state.consumption[v] || 0;
+      const sv = served[v] || 0;
+      servedTotal += sv;
+      unservedTotal += Math.max(0, demand - sv);
+      const p = priorities[v] || "normal";
+      if (p === "critical") {
+        criticalTotal++;
+        if (sv >= demand - 1e-6) criticalServed++;
+        else criticalUnserved++;
+      }
+    }
+    const feasible = capacityViolations === 0 && criticalUnserved === 0;
+    return {
+      feasible,
+      critical_served_count: criticalServed,
+      critical_total_count: criticalTotal,
+      critical_unserved_count: criticalUnserved,
+      capacity_violations_count: capacityViolations,
+      max_loading_percent: Math.round(maxLoading * 10) / 10,
+      served_total_mw: Math.round(servedTotal),
+      unserved_total_mw: Math.round(unservedTotal),
+      demand_total_mw: state.params.total_consumption,
+    };
+  }
+
+  function computeFlowsFromState(G, state, disabled, disabledEdges) {
+    return computeFlows(
+      G, state.roles, state.production, state.consumption, state.params.seed,
+      disabled, disabledEdges, state.edge_capacity || {}, state.priority || {}
+    );
+  }
+
+  function evaluateFeasibilityState(state, disabled = new Set(), disabledEdges = null) {
+    const G = stateToGraph(state);
+    const de = disabledEdges || edgeKeySet(state.disabled_edges);
+    initCapacityState(state, state.params.seed);
+    const { edgeFlow, failed, served } = computeFlowsFromState(G, state, disabled, de);
+    return analyzeFeasibility(G, state, edgeFlow, failed, served, state.edge_capacity, state.priority);
+  }
+
+  function blockCost(mw, costPerBlock) {
+    return Math.ceil(Math.max(1, mw) / CAPACITY_BLOCK_MW) * costPerBlock;
+  }
+
+  function improvementScore(before, after) {
+    return (
+      (before.critical_unserved_count - after.critical_unserved_count) * 1000 +
+      (before.capacity_violations_count - after.capacity_violations_count) * 100 +
+      (after.served_total_mw - before.served_total_mw)
+    );
+  }
+
+  function computeFlows(G, roles, production, consumption, seed, disabled = new Set(), disabledEdges = new Set(), edgeCapacity = {}, priorities = {}) {
     const active = new Set(G.nodes().filter(v => !disabled.has(v)));
     const H = G.subgraphBlocked(active, disabledEdges);
     const rng = new Random(seed + 2);
@@ -523,11 +673,18 @@
 
     let generators = [...active].filter(v => roles[v] === "generator" && supply[v] > 1e-9);
     let consumers = [...active].filter(v => roles[v] === "consumer" && demand[v] > 1e-9);
+    consumers.sort((a, b) => {
+      const pa = PRIORITY_RANK[priorities[a] || "normal"] ?? 2;
+      const pb = PRIORITY_RANK[priorities[b] || "normal"] ?? 2;
+      return pa - pb;
+    });
     rng.shuffle(generators);
-    rng.shuffle(consumers);
+
+    const served = {};
 
     for (const consumer of consumers) {
       let need = demand[consumer];
+      const initialNeed = need;
       while (need > 1e-9) {
         const src = generators
           .filter(g => supply[g] > 1e-9)
@@ -535,14 +692,23 @@
         if (src === undefined) break;
         const path = H.shortestPath(src, consumer);
         if (!path) break;
-        const amount = Math.min(supply[src], need);
+        const pathCap = maxPushOnPath(path, edgeFlow, edgeCapacity);
+        const amount = Math.min(supply[src], need, pathCap);
+        if (amount < 1e-9) break;
         for (let i = 0; i < path.length - 1; i++) {
           addFlow(path[i], path[i + 1], amount);
         }
         supply[src] -= amount;
         need -= amount;
       }
+      served[consumer] = initialNeed - need;
       if (need > 1e-9) failed.add(consumer);
+    }
+
+    for (const v of G.nodes()) {
+      if (roles[v] === "consumer" && !served.hasOwnProperty(v)) {
+        served[v] = 0;
+      }
     }
 
     const surplus = {};
@@ -555,7 +721,7 @@
       const [a, b] = key.split(",").map(Number);
       flowTuples[[a, b].join(",")] = val;
     }
-    return { edgeFlow: flowTuples, surplus, failed };
+    return { edgeFlow: flowTuples, surplus, failed, served };
   }
 
   function nodeBalance(G, production, consumption, edgeFlow, surplus) {
@@ -655,10 +821,23 @@
     return pos;
   }
 
-  function buildVisData(G, roles, production, consumption, edgeFlow, surplus, seed, disabled, failed, positions, disabledEdges) {
+  function edgeLabelWithCapacity(u, v, f, cap) {
+    const base = edgeLabel(u, v, f);
+    const flow = Math.round(Math.abs(f));
+    const c = Math.round(cap);
+    const load = c > 0 ? Math.round((flow / c) * 100) : 0;
+    return `${base}\n${flow}/${c} MW (${load}%)`;
+  }
+
+  function buildVisData(G, roles, production, consumption, edgeFlow, surplus, seed, disabled, failed, positions, disabledEdges, edgeCapacity, priorities, reinforcedEdges, newEdges, served) {
     disabled = disabled || new Set();
     failed = failed || new Set();
     disabledEdges = disabledEdges || new Set();
+    edgeCapacity = edgeCapacity || {};
+    priorities = priorities || {};
+    reinforcedEdges = new Set(reinforcedEdges || []);
+    newEdges = new Set(newEdges || []);
+    served = served || {};
     const n = G.n;
     const k = Math.max(1.8, 3.0 / Math.max(n, 1));
     const defaultPos = springLayout(n, G.edges, seed, 80, k);
@@ -699,21 +878,44 @@
         fontColor = "#ffffff";
         borderWidth = 2;
         nodeSize = sizeMap[roles[v]];
+        if (roles[v] === "consumer" && priorities[v] === "critical") {
+          color = {
+            background: COLOR.consumer,
+            border: "#FF9800",
+            highlight: { background: COLOR.consumer, border: "#F57C00" },
+            hover: { background: COLOR.consumer, border: "#F57C00" },
+          };
+          borderWidth = 4;
+        }
+      }
+
+      const letter = LETTERS[v];
+      let tooltip = labelForVertex(v, roles, production, consumption, surplus);
+      if (roles[v] === "consumer" && priorities[v]) {
+        const d = consumption[v] || 0;
+        const sv = served[v] || 0;
+        tooltip += `\n[${priorities[v]}] ${sv}/${d}`;
       }
 
       const node = {
         id: v,
-        label: labelForVertex(v, roles, production, consumption, surplus),
+        label: "",
+        title: tooltip,
+        letter,
+        tooltip,
+        shape: "dot",
         x,
         y,
         color,
         size: nodeSize,
-        font: { color: fontColor, size: 16, face: "Arial", multi: true, bold: true },
+        font: { size: 0, color: "rgba(0,0,0,0)" },
         borderWidth,
         disabled_manual: isOff,
         disabled_failed: isFailed,
         role: roles[v],
         role_color: COLOR[roles[v]],
+        priority: priorities[v] || null,
+        is_critical: priorities[v] === "critical",
       };
       if (isOff || isFailed) node.chosen = { node: false, label: false };
       nodes.push(node);
@@ -728,23 +930,33 @@
       const edgeOff = disabledEdges.has(ek);
       const offEdge = inactive.has(u) || inactive.has(v) || edgeOff;
       const f = offEdge ? 0 : edgeFlow[ek] || 0;
+      const cap = getEdgeCapacityMw(edgeCapacity, u, v);
+      const violation = !offEdge && Math.abs(f) > cap + 1e-6;
       const [frm, to, arrow] = edgeDirection(u, v, f);
       const zeroFlow = Math.abs(f) < 1e-9;
-      const dashed = offEdge || zeroFlow;
+      const isNew = newEdges.has(ek);
+      const isReinforced = reinforcedEdges.has(ek);
+      const dashed = offEdge || zeroFlow || isNew;
       const edge = {
         id: `${u}-${v}`,
         from: frm,
         to,
-        label: edgeOff ? `${LETTERS[u]}—${LETTERS[v]} ✕` : edgeLabel(u, v, f),
+        label: edgeOff ? `${LETTERS[u]}—${LETTERS[v]} ✕` : edgeLabelWithCapacity(u, v, f, cap),
         font: { size: edgeFont, align: "middle", background: "rgba(255,255,255,0.85)" },
         color: {
-          color: edgeOff ? "#e65100" : offEdge ? "#bbbbbb" : zeroFlow ? "#aaaaaa" : "#666666",
-          highlight: edgeOff ? "#bf360c" : "#333333",
+          color: violation ? "#c62828" : edgeOff ? "#e65100" : offEdge ? "#bbbbbb" : zeroFlow ? "#aaaaaa" : isReinforced ? "#1565C0" : "#666666",
+          highlight: violation ? "#b71c1c" : "#333333",
         },
-        width: edgeOff ? 3 : offEdge ? 1.5 : 2,
+        width: violation ? 4 : edgeOff ? 3 : isReinforced ? 3 : offEdge ? 1.5 : 2,
         smooth: { type: "continuous" },
         dashes: dashed ? [6, 8] : false,
         disabled_manual_edge: edgeOff,
+        capacity_violation: violation,
+        capacity_mw: cap,
+        flow_mw: f,
+        loading_percent: cap > 0 ? Math.round((Math.abs(f) / cap) * 1000) / 10 : 0,
+        reinforced_edge: isReinforced,
+        new_edge: isNew,
       };
       if (arrow && !offEdge) edge.arrows = "to";
       edges.push(edge);
@@ -766,10 +978,15 @@
     return { lat: g.lat, lng: g.lon, x: g.lon, y: g.lat };
   }
 
-  function buildMapVisData(G, roles, production, consumption, edgeFlow, surplus, seed, disabled, failed, geo, positions, disabledEdges) {
+  function buildMapVisData(G, roles, production, consumption, edgeFlow, surplus, seed, disabled, failed, geo, positions, disabledEdges, edgeCapacity, priorities, reinforcedEdges, newEdges, served) {
     disabled = disabled || new Set();
     failed = failed || new Set();
     disabledEdges = disabledEdges || new Set();
+    edgeCapacity = edgeCapacity || {};
+    priorities = priorities || {};
+    reinforcedEdges = new Set(reinforcedEdges || []);
+    newEdges = new Set(newEdges || []);
+    served = served || {};
     const sizeMap = { generator: 44, consumer: 44, transit: 38 };
     const edgeFont = 12;
 
@@ -795,19 +1012,39 @@
         fontColor = "#ffffff";
         borderWidth = 2;
         nodeSize = sizeMap[roles[v]];
+        if (roles[v] === "consumer" && priorities[v] === "critical") {
+          color = {
+            background: COLOR.consumer,
+            border: "#FF9800",
+            highlight: { background: COLOR.consumer, border: "#F57C00" },
+            hover: { background: COLOR.consumer, border: "#F57C00" },
+          };
+          borderWidth = 4;
+        }
       }
 
       const g = geo[String(v)] ?? geo[v];
+      const letter = LETTERS[v];
+      let tooltip = labelForVertex(v, roles, production, consumption, surplus);
+      if (roles[v] === "consumer" && priorities[v]) {
+        const d = consumption[v] || 0;
+        const sv = served[v] || 0;
+        tooltip += `\n[${priorities[v]}] ${sv}/${d}`;
+      }
       const node = {
         id: v,
-        label: labelForVertex(v, roles, production, consumption, surplus),
+        label: "",
+        title: tooltip,
+        letter,
+        tooltip,
+        shape: "dot",
         x,
         y,
         lat,
         lng,
         color,
         size: nodeSize,
-        font: { color: fontColor, size: 16, face: "Arial", multi: true, bold: true },
+        font: { size: 0, color: "rgba(0,0,0,0)" },
         borderWidth,
         disabled_manual: isOff,
         disabled_failed: isFailed,
@@ -816,6 +1053,8 @@
         station_name: g?.name || "",
         oblast: g?.oblast || "",
         station_id: g?.station_id || "",
+        priority: priorities[v] || null,
+        is_critical: priorities[v] === "critical",
       };
       if (isOff || isFailed) node.chosen = { node: false, label: false };
       nodes.push(node);
@@ -830,19 +1069,31 @@
       const edgeOff = disabledEdges.has(ek);
       const offEdge = inactive.has(u) || inactive.has(v) || edgeOff;
       const f = offEdge ? 0 : edgeFlow[ek] || 0;
+      const cap = getEdgeCapacityMw(edgeCapacity, u, v);
+      const violation = !offEdge && Math.abs(f) > cap + 1e-6;
       const [frm, to, arrow] = edgeDirection(u, v, f);
       const zeroFlow = Math.abs(f) < 1e-9;
-      const dashed = offEdge || zeroFlow;
+      const isNew = newEdges.has(ek);
+      const isReinforced = reinforcedEdges.has(ek);
       const edge = {
         id: `${u}-${v}`,
         from: frm,
         to,
-        label: edgeOff ? `${LETTERS[u]}—${LETTERS[v]} ✕` : edgeLabel(u, v, f),
+        label: edgeOff ? `${LETTERS[u]}—${LETTERS[v]} ✕` : edgeLabelWithCapacity(u, v, f, cap),
         font: { size: edgeFont, align: "middle", background: "rgba(255,255,255,0.85)" },
-        color: { color: edgeOff ? "#e65100" : offEdge ? "#bbbbbb" : zeroFlow ? "#aaaaaa" : "#555555", highlight: "#333333" },
-        width: edgeOff ? 4 : offEdge ? 2 : 3,
-        dashes: dashed ? [8, 10] : false,
+        color: {
+          color: violation ? "#c62828" : edgeOff ? "#e65100" : offEdge ? "#bbbbbb" : zeroFlow ? "#aaaaaa" : isReinforced ? "#1565C0" : "#555555",
+          highlight: "#333333",
+        },
+        width: violation ? 5 : edgeOff ? 4 : isReinforced ? 4 : offEdge ? 2 : 3,
+        dashes: offEdge || zeroFlow || isNew ? [8, 10] : false,
         disabled_manual_edge: edgeOff,
+        capacity_violation: violation,
+        capacity_mw: cap,
+        flow_mw: f,
+        loading_percent: cap > 0 ? Math.round((Math.abs(f) / cap) * 1000) / 10 : 0,
+        reinforced_edge: isReinforced,
+        new_edge: isNew,
       };
       if (arrow && !offEdge) edge.arrows = "to";
       edges.push(edge);
@@ -914,12 +1165,20 @@
     return checks.map(([name, ok]) => ({ name, ok }));
   }
 
+  function nodeTooltipText(n) {
+    return n.title || n.tooltip || n.label || "";
+  }
+
+  function nodeLetter(n) {
+    return n.letter || nodeTooltipText(n).split("\n")[0] || String(n.id);
+  }
+
   function buildPanel(nodes, edges) {
     const manual = [];
     const autoFailed = [];
     for (const n of nodes) {
-      const letter = n.label.split("\n")[0];
-      const entry = { letter, label: n.label.replace(/\n/g, " ") };
+      const letter = nodeLetter(n);
+      const entry = { letter, label: nodeTooltipText(n).replace(/\n/g, " ") };
       if (n.disabled_manual) manual.push(entry);
       else if (n.disabled_failed) autoFailed.push(entry);
     }
@@ -932,20 +1191,23 @@
   function evaluateState(state, disabled = new Set(), positions = null) {
     const G = stateToGraph(state);
     const params = state.params;
+    initCapacityState(state, params.seed);
     const disabledEdges = edgeKeySet(state.disabled_edges);
-    const { edgeFlow, surplus, failed } = computeFlows(
-      G, state.roles, state.production, state.consumption, params.seed, disabled, disabledEdges
-    );
+    const { edgeFlow, surplus, failed, served } = computeFlowsFromState(G, state, disabled, disabledEdges);
     const balances = nodeBalance(G, state.production, state.consumption, edgeFlow, surplus);
+    const feasibility = analyzeFeasibility(G, state, edgeFlow, failed, served, state.edge_capacity, state.priority);
+    const reinforcedSet = new Set((state.reinforced_edges || []).map(k => (typeof k === "string" ? k : edgeKey(k[0], k[1]))));
+    const newSet = new Set((state.new_edges || []).map(k => (typeof k === "string" ? k : edgeKey(k[0], k[1]))));
+    const visExtra = [state.edge_capacity, state.priority, reinforcedSet, newSet, served];
     const isMap = !!(state.geo && Object.keys(state.geo).length);
     const { nodes, edges } = isMap
       ? buildMapVisData(
           G, state.roles, state.production, state.consumption,
-          edgeFlow, surplus, params.seed, disabled, failed, state.geo, positions, disabledEdges
+          edgeFlow, surplus, params.seed, disabled, failed, state.geo, positions, disabledEdges, ...visExtra
         )
       : buildVisData(
           G, state.roles, state.production, state.consumption,
-          edgeFlow, surplus, params.seed, disabled, failed, positions, disabledEdges
+          edgeFlow, surplus, params.seed, disabled, failed, positions, disabledEdges, ...visExtra
         );
     const checks = isMap
       ? runMapChecks(G, state.roles, state.production, state.consumption, surplus, balances, params, disabled, failed)
@@ -954,7 +1216,17 @@
           surplus, balances, params, disabled, failed
         );
     if (disabledEdges.size) {
-      checks.push([`Отключено рёбер: ${disabledEdges.size}`, true]);
+      checks.push({ name: `Отключено рёбер: ${disabledEdges.size}`, ok: true });
+    }
+    checks.push({
+      name: `Допустимость (capacity + critical): ${feasibility.feasible ? "OK" : "INFEASIBLE"}`,
+      ok: feasibility.feasible,
+    });
+    if (feasibility.critical_unserved_count > 0) {
+      checks.push({ name: `Critical не покрыты: ${feasibility.critical_unserved_count}`, ok: false });
+    }
+    if (feasibility.capacity_violations_count > 0) {
+      checks.push({ name: `Нарушения capacity: ${feasibility.capacity_violations_count}`, ok: false });
     }
     let activeConsumption = 0;
     for (const v of G.nodes()) {
@@ -982,7 +1254,9 @@
         disabled_edges_count: disabledEdges.size,
         failed_count: failed.size,
         served_consumption: activeConsumption,
+        feasibility,
       },
+      feasibility,
       panel: buildPanel(nodes, edges),
     };
   }
@@ -999,9 +1273,7 @@
       if (baseDisabled.has(v)) continue;
       const trial = new Set(baseDisabled);
       trial.add(v);
-      const { failed } = computeFlows(
-        G, state.roles, state.production, state.consumption, params.seed, trial, disabledEdges
-      );
+      const { failed } = computeFlowsFromState(G, state, trial, disabledEdges);
       const failedConsumers = new Set([...failed].filter(f => state.roles[f] === "consumer"));
       const count = failedConsumers.size;
       if (count > bestCount || (count === bestCount && LETTERS[v] < LETTERS[bestV])) {
@@ -1035,9 +1307,7 @@
       if (disabledEdges.has(ek)) continue;
       const trial = new Set(disabledEdges);
       trial.add(ek);
-      const { failed } = computeFlows(
-        G, state.roles, state.production, state.consumption, params.seed, baseDisabled, trial
-      );
+      const { failed } = computeFlowsFromState(G, state, baseDisabled, trial);
       const failedConsumers = new Set([...failed].filter(f => state.roles[f] === "consumer"));
       const count = failedConsumers.size;
       if (
@@ -1144,6 +1414,7 @@
       consumption,
       geo,
     };
+    initCapacityState(state, seed);
     return evaluateState(state, new Set());
   }
 
@@ -1168,6 +1439,7 @@
       production,
       consumption,
     };
+    initCapacityState(state, params.seed);
     return evaluateState(state, new Set());
   }
 
@@ -1216,9 +1488,7 @@
     let maxDamage = 0;
 
     for (const v of G.nodes()) {
-      const { failed } = computeFlows(
-        G, roles, state.production, state.consumption, params.seed, new Set([v]), disabledEdges
-      );
+      const { failed } = computeFlowsFromState(G, state, new Set([v]), disabledEdges);
       const count = [...failed].filter(f => roles[f] === "consumer").length;
       if (count > maxDamage) maxDamage = count;
     }
@@ -1228,9 +1498,7 @@
       if (disabledEdges.has(ek)) continue;
       const trialEdges = new Set(disabledEdges);
       trialEdges.add(ek);
-      const { failed } = computeFlows(
-        G, roles, state.production, state.consumption, params.seed, new Set(), trialEdges
-      );
+      const { failed } = computeFlowsFromState(G, state, new Set(), trialEdges);
       const count = [...failed].filter(f => roles[f] === "consumer").length;
       if (count > maxDamage) maxDamage = count;
     }
@@ -1758,10 +2026,15 @@
     return true;
   }
 
-  function buildLargeVisData(G, roles, production, consumption, edgeFlow, surplus, seed, disabled, failed, positions, disabledEdges, opts) {
+  function buildLargeVisData(G, roles, production, consumption, edgeFlow, surplus, seed, disabled, failed, positions, disabledEdges, opts, edgeCapacity, priorities, reinforcedEdges, newEdges, served) {
     disabled = disabled || new Set();
     failed = failed || new Set();
     disabledEdges = disabledEdges || new Set();
+    edgeCapacity = edgeCapacity || {};
+    priorities = priorities || {};
+    reinforcedEdges = new Set(reinforcedEdges || []);
+    newEdges = new Set(newEdges || []);
+    served = served || {};
     opts = opts || defaultRenderOpts(G.n);
     const n = G.n;
     const defaultPos = circleLayout(n, seed);
@@ -1783,27 +2056,48 @@
       const { x, y } = getPos(v);
       const isOff = disabled.has(v);
       const isFailed = failed.has(v) && !isOff;
-      const showLabel =
-        labelMode === "all" ||
-        (labelMode === "selected" && (highlights.has(v) || isOff || isFailed));
+      const showLabel = false;
       let color;
       if (isOff) color = makeBlackNodeColor();
       else if (isFailed) color = makeNodeColor("#bdbdbd");
       else color = makeNodeColor(COLOR[roles[v]]);
+      if (roles[v] === "consumer" && priorities[v] === "critical") {
+        color = {
+          background: COLOR.consumer,
+          border: "#FF9800",
+          highlight: { background: COLOR.consumer, border: "#F57C00" },
+          hover: { background: COLOR.consumer, border: "#F57C00" },
+        };
+      }
+
+      let title = `${nodeName(v, n)} · ${roles[v]}`;
+      if (roles[v] === "generator") title += `\n${production[v] || 0} MW`;
+      if (roles[v] === "consumer") {
+        const d = consumption[v] || 0;
+        const sv = served[v] || 0;
+        title += `\n${sv}/${d} MW`;
+        if (priorities[v]) title += `\n[${priorities[v]}]`;
+      }
 
       nodes.push({
         id: v,
-        label: showLabel ? nodeName(v, n) : "",
+        label: "",
+        title,
+        display_name: nodeName(v, n),
+        show_label: showLabel,
+        shape: "dot",
         x,
         y,
         color,
         size: nodeSize,
-        font: { size: showLabel ? 10 : 0, color: "#fff" },
-        borderWidth: isOff || isFailed ? 1 : 0.5,
+        font: { size: 0, color: "rgba(0,0,0,0)" },
+        borderWidth: roles[v] === "consumer" && priorities[v] === "critical" ? 3 : isOff || isFailed ? 1 : 0.5,
         disabled_manual: isOff,
         disabled_failed: isFailed,
         role: roles[v],
         role_color: COLOR[roles[v]],
+        priority: priorities[v] || null,
+        is_critical: priorities[v] === "critical",
       });
     }
 
@@ -1819,7 +2113,11 @@
       const edgeOff = disabledEdges.has(ek);
       const offEdge = inactive.has(u) || inactive.has(v) || edgeOff;
       const f = offEdge ? 0 : edgeFlow[ek] || 0;
+      const cap = getEdgeCapacityMw(edgeCapacity, u, v);
+      const violation = !offEdge && Math.abs(f) > cap + 1e-6;
       const zeroFlow = Math.abs(f) < 1e-9;
+      const isNew = newEdges.has(ek);
+      const isReinforced = reinforcedEdges.has(ek);
       if (edgeMode === "hidden") continue;
       if (edgeMode === "active" && zeroFlow && !edgeOff) continue;
       if (!opts.showZeroEdges && zeroFlow && !edgeOff) continue;
@@ -1830,13 +2128,18 @@
         from: frm,
         to,
         color: {
-          color: edgeOff ? "#e65100" : offEdge ? "#cccccc" : zeroFlow ? "#dddddd" : "#888888",
+          color: violation ? "#c62828" : edgeOff ? "#e65100" : offEdge ? "#cccccc" : zeroFlow ? "#dddddd" : isReinforced ? "#1565C0" : "#888888",
           opacity: n > 500 ? 0.25 : 0.5,
         },
-        width: edgeOff ? 2 : n > 500 ? 0.5 : 1,
-        dashes: offEdge || zeroFlow ? [4, 6] : false,
+        width: violation ? 2.5 : edgeOff ? 2 : isReinforced ? 2 : n > 500 ? 0.5 : 1,
+        dashes: isNew ? [4, 6] : false,
         disabled_manual_edge: edgeOff,
-        _flow: f,
+        capacity_violation: violation,
+        capacity_mw: cap,
+        flow_mw: f,
+        loading_percent: cap > 0 ? Math.round((Math.abs(f) / cap) * 1000) / 10 : 0,
+        reinforced_edge: isReinforced,
+        new_edge: isNew,
       };
       if (arrow && !offEdge && n <= 200) edge.arrows = "to";
       edges.push(edge);
@@ -1844,10 +2147,15 @@
     return { nodes, edges };
   }
 
-  function buildLargeMapVisData(G, roles, production, consumption, edgeFlow, surplus, seed, disabled, failed, geo, positions, disabledEdges, opts) {
+  function buildLargeMapVisData(G, roles, production, consumption, edgeFlow, surplus, seed, disabled, failed, geo, positions, disabledEdges, opts, edgeCapacity, priorities, reinforcedEdges, newEdges, served) {
     disabled = disabled || new Set();
     failed = failed || new Set();
     disabledEdges = disabledEdges || new Set();
+    edgeCapacity = edgeCapacity || {};
+    priorities = priorities || {};
+    reinforcedEdges = new Set(reinforcedEdges || []);
+    newEdges = new Set(newEdges || []);
+    served = served || {};
     opts = opts || defaultRenderOpts(G.n);
     const n = G.n;
     const highlights = new Set(opts.highlightNodes || []);
@@ -1859,12 +2167,21 @@
       const isOff = disabled.has(v);
       const isFailed = failed.has(v) && !isOff;
       const g = geo[String(v)] ?? geo[v] ?? {};
-      const showLabel = opts.labelMode === "all" || (opts.labelMode === "selected" && highlights.has(v));
+      let title = g.name ? `${g.name} (#${v})` : `#${v} · ${roles[v]}`;
+      if (roles[v] === "consumer" && priorities[v]) {
+        const d = consumption[v] || 0;
+        const sv = served[v] || 0;
+        title += `\n[${priorities[v]}] ${sv}/${d} MW`;
+      } else if (roles[v] === "generator") {
+        title += `\n${production[v] || 0} MW`;
+      }
       nodes.push({
         id: v,
         lat,
         lng,
-        label: showLabel ? nodeName(v, n) : "",
+        label: "",
+        title,
+        tooltip: title,
         disabled_manual: isOff,
         disabled_failed: isFailed,
         role: roles[v],
@@ -1872,6 +2189,8 @@
         station_name: g.name || "",
         coord_source: g.coord_source || "OPEN_DATA",
         synthetic: !!g.synthetic,
+        priority: priorities[v] || null,
+        is_critical: priorities[v] === "critical",
       });
     }
 
@@ -1885,7 +2204,11 @@
       const edgeOff = disabledEdges.has(ek);
       const offEdge = inactive.has(u) || inactive.has(v) || edgeOff;
       const f = offEdge ? 0 : edgeFlow[ek] || 0;
+      const cap = getEdgeCapacityMw(edgeCapacity, u, v);
+      const violation = !offEdge && Math.abs(f) > cap + 1e-6;
       const zeroFlow = Math.abs(f) < 1e-9;
+      const isNew = newEdges.has(ek);
+      const isReinforced = reinforcedEdges.has(ek);
       if (edgeMode === "hidden") continue;
       if (edgeMode === "active" && zeroFlow && !edgeOff) continue;
       if (Math.abs(f) < (opts.flowThreshold || 0) && !edgeOff) continue;
@@ -1894,9 +2217,15 @@
         id: `${u}-${v}`,
         from: frm,
         to,
-        label: edgeOff ? "✕" : zeroFlow ? "" : String(Math.round(Math.abs(f))),
+        label: edgeOff ? "✕" : zeroFlow ? "" : `${Math.round(Math.abs(f))}/${Math.round(cap)}`,
         disabled_manual_edge: edgeOff,
         _flow: Math.abs(f),
+        capacity_violation: violation,
+        capacity_mw: cap,
+        flow_mw: f,
+        loading_percent: cap > 0 ? Math.round((Math.abs(f) / cap) * 1000) / 10 : 0,
+        reinforced_edge: isReinforced,
+        new_edge: isNew,
       });
     }
     return { nodes, edges };
@@ -1910,15 +2239,17 @@
     const G = stateToGraph(state);
     const params = state.params;
     const n = params.n_vertices;
+    initCapacityState(state, params.seed);
     const opts = renderOpts || defaultRenderOpts(n);
     const disabledEdges = edgeKeySet(state.disabled_edges);
-    const { edgeFlow, surplus, failed } = computeFlows(
-      G, state.roles, state.production, state.consumption, params.seed, disabled, disabledEdges
-    );
+    const { edgeFlow, surplus, failed, served } = computeFlowsFromState(G, state, disabled, disabledEdges);
+    const feasibility = analyzeFeasibility(G, state, edgeFlow, failed, served, state.edge_capacity, state.priority);
+    const reinforcedSet = new Set((state.reinforced_edges || []).map(k => (typeof k === "string" ? k : edgeKey(k[0], k[1]))));
+    const newSet = new Set((state.new_edges || []).map(k => (typeof k === "string" ? k : edgeKey(k[0], k[1]))));
     const isMap = !!(state.geo && Object.keys(state.geo).length);
     const { nodes, edges } = isMap
-      ? buildLargeMapVisData(G, state.roles, state.production, state.consumption, edgeFlow, surplus, params.seed, disabled, failed, state.geo, positions, disabledEdges, opts)
-      : buildLargeVisData(G, state.roles, state.production, state.consumption, edgeFlow, surplus, params.seed, disabled, failed, positions, disabledEdges, opts);
+      ? buildLargeMapVisData(G, state.roles, state.production, state.consumption, edgeFlow, surplus, params.seed, disabled, failed, state.geo, positions, disabledEdges, opts, state.edge_capacity, state.priority, reinforcedSet, newSet, served)
+      : buildLargeVisData(G, state.roles, state.production, state.consumption, edgeFlow, surplus, params.seed, disabled, failed, positions, disabledEdges, opts, state.edge_capacity, state.priority, reinforcedSet, newSet, served);
     const nextState = { ...state, disabled_edges: edgeKeyList(disabledEdges) };
     let activeConsumption = 0;
     for (const v of G.nodes()) {
@@ -1931,7 +2262,10 @@
       ok: true,
       nodes,
       edges,
-      checks: [[`Large screening: ${n} узлов`, true]],
+      checks: [
+        { name: `Large screening: ${n} узлов`, ok: true },
+        { name: `Допустимость: ${feasibility.feasible ? "OK" : "INFEASIBLE"}`, ok: feasibility.feasible },
+      ],
       state: stateToJson(nextState),
       disabled: [...disabled].sort((a, b) => a - b),
       disabled_edges: edgeKeyList(disabledEdges),
@@ -1947,7 +2281,9 @@
         disabled_edges_count: disabledEdges.size,
         failed_count: failed.size,
         served_consumption: activeConsumption,
+        feasibility,
       }, state.roles),
+      feasibility,
       panel: buildPanel(nodes, edges),
     };
   }
@@ -1973,6 +2309,7 @@
       production,
       consumption,
     };
+    initCapacityState(state, params.seed);
     return evaluateStateLarge(state, new Set());
   }
 
@@ -2002,9 +2339,7 @@
       const v = vertices[i];
       const trial = new Set(baseDisabled);
       trial.add(v);
-      const { failed } = computeFlows(
-        G, state.roles, state.production, state.consumption, params.seed, trial, disabledEdges
-      );
+      const { failed } = computeFlowsFromState(G, state, trial, disabledEdges);
       const failedConsumers = new Set([...failed].filter(f => state.roles[f] === "consumer"));
       const count = failedConsumers.size;
       if (count > bestCount || (count === bestCount && v < bestV)) {
@@ -2043,9 +2378,7 @@
       const ek = edgeKey(u, v);
       const trial = new Set(disabledEdges);
       trial.add(ek);
-      const { failed } = computeFlows(
-        G, state.roles, state.production, state.consumption, params.seed, baseDisabled, trial
-      );
+      const { failed } = computeFlowsFromState(G, state, baseDisabled, trial);
       const failedConsumers = new Set([...failed].filter(f => state.roles[f] === "consumer"));
       const count = failedConsumers.size;
       if (count > bestCount || (count === bestCount && best && ek < best.edgeKey)) {
@@ -2100,43 +2433,82 @@
     return result;
   }
 
+  const UKRAINE_BBOX = { latMin: 44.18, latMax: 52.38, lonMin: 22.10, lonMax: 40.23 };
+  const GEO_JITTER_DEG = 0.04;
+
+  function normalizeGeoStation(s) {
+    if (!s || typeof s !== "object") return null;
+    const lat = s.lat ?? s.latitude;
+    const lon = s.lon ?? s.lng ?? s.longitude;
+    if (lat == null || lon == null || !Number.isFinite(+lat) || !Number.isFinite(+lon)) return null;
+    return { ...s, lat: +lat, lon: +lon, type: s.type || "solar" };
+  }
+
+  function normalizeSolarPool(pool) {
+    return (pool || []).map(normalizeGeoStation).filter(Boolean).filter(s => s.type === "solar");
+  }
+
+  function geoPassportFromStations(stations) {
+    const sources = new Set(
+      stations.map(s => s.coord_source || (s.synthetic ? "SYNTHETIC_DERIVED" : "OPEN_DATA"))
+    );
+    let coords = "OPEN_DATA";
+    if (sources.has("SYNTHETIC_FALLBACK")) {
+      coords = sources.size > 1 ? "OPEN_DATA / SYNTHETIC_FALLBACK" : "SYNTHETIC_FALLBACK";
+    } else if (sources.has("SYNTHETIC_DERIVED")) {
+      coords = sources.has("OPEN_DATA") ? "OPEN_DATA / SYNTHETIC_DERIVED" : "SYNTHETIC_DERIVED";
+    }
+    return { coords, links: "SYNTHETIC", capacity: "SYNTHETIC", model: "MATHEMATICAL SCREENING" };
+  }
+
+  function generateUkraineFallbackPoints(targetCount, rng) {
+    const out = [];
+    for (let i = 0; i < targetCount; i++) {
+      out.push({
+        station_id: `fallback-${i}`,
+        name: `FALLBACK ${i}`,
+        lat: UKRAINE_BBOX.latMin + rng.random() * (UKRAINE_BBOX.latMax - UKRAINE_BBOX.latMin),
+        lon: UKRAINE_BBOX.lonMin + rng.random() * (UKRAINE_BBOX.lonMax - UKRAINE_BBOX.lonMin),
+        oblast: "",
+        type: "solar",
+        coord_source: "SYNTHETIC_FALLBACK",
+        synthetic: true,
+      });
+    }
+    return out;
+  }
+
   function deriveGeoPool(pool, targetCount, seed) {
     const rng = new Random(seed);
-    const eligible = pool.filter(s => s.lat != null && s.lon != null);
-    if (!eligible.length) throw new Error("Нет точек с координатами");
-    const out = [];
+    const eligible = normalizeSolarPool(pool);
+    if (!eligible.length) {
+      const stations = generateUkraineFallbackPoints(targetCount, rng);
+      return { stations, passport: geoPassportFromStations(stations) };
+    }
     if (eligible.length >= targetCount) {
       const picked = rng.sample(eligible, targetCount);
-      for (const s of picked) {
-        out.push({ ...s, type: s.type || "solar", coord_source: "OPEN_DATA", synthetic: false });
-      }
-      return { stations: out, passport: { coords: "OPEN_DATA", links: "SYNTHETIC", capacity: "SYNTHETIC", model: "MATHEMATICAL SCREENING" } };
+      const stations = picked.map(s => ({ ...s, coord_source: "OPEN_DATA", synthetic: false }));
+      return { stations, passport: geoPassportFromStations(stations) };
     }
-    let openCount = 0;
-    let synthCount = 0;
+    const out = [];
+    for (const s of rng.shuffle([...eligible])) {
+      out.push({ ...s, coord_source: "OPEN_DATA", synthetic: false });
+    }
     while (out.length < targetCount) {
       const src = rng.choice(eligible);
-      const isSynth = out.length >= eligible.length;
-      const jitter = () => (rng.random() - 0.5) * 0.12;
-      const pt = {
+      const jitter = () => (rng.random() - 0.5) * GEO_JITTER_DEG;
+      out.push({
         ...src,
-        station_id: isSynth ? `synth-${out.length}` : src.station_id,
-        name: isSynth ? `SYNTH ${src.name?.slice(0, 24) || out.length}` : src.name,
+        station_id: `synth-${out.length}`,
+        name: `SYNTH ${String(src.name || out.length).slice(0, 24)}`,
         lat: src.lat + jitter(),
         lon: src.lon + jitter(),
         type: "solar",
-        coord_source: isSynth ? "SYNTHETIC_DERIVED" : "OPEN_DATA",
-        synthetic: isSynth,
-      };
-      out.push(pt);
-      if (isSynth) synthCount++;
-      else openCount++;
+        coord_source: "SYNTHETIC_DERIVED",
+        synthetic: true,
+      });
     }
-    const coordsLabel = synthCount === 0 ? "OPEN_DATA" : openCount > 0 ? "OPEN_DATA / SYNTHETIC_DERIVED" : "SYNTHETIC_DERIVED";
-    return {
-      stations: out,
-      passport: { coords: coordsLabel, links: "SYNTHETIC", capacity: "SYNTHETIC", model: "MATHEMATICAL SCREENING" },
-    };
+    return { stations: out, passport: geoPassportFromStations(out) };
   }
 
   function generateLargeGeo(pool, opts = {}) {
@@ -2192,7 +2564,180 @@
       },
     };
     const state = { params, roles, edges: G.edges.map(e => [...e]), production, consumption, geo, passport };
+    initCapacityState(state, seed);
     return evaluateStateLarge(state, new Set());
+  }
+
+  function formatCapacityActionText(state, action) {
+    const n = state.params.n_vertices;
+    if (action.type === "strengthen_edge") {
+      return `усилить ребро ${nodeName(action.u, n)}-${nodeName(action.v, n)} на +${action.mw} MW, cost=${action.cost}`;
+    }
+    if (action.type === "add_edge") {
+      return `добавить ребро ${nodeName(action.u, n)}-${nodeName(action.v, n)} ${action.mw} MW, cost=${action.cost}`;
+    }
+    if (action.type === "transit") {
+      return `добавить транзит ${action.mw} MW (связь ${nodeName(action.u, n)}-${nodeName(action.v, n)}), cost=${action.cost}`;
+    }
+    if (action.type === "generator") {
+      return `добавить генератор ${action.mw} MW, cost=${action.cost}`;
+    }
+    return action.type;
+  }
+
+  function applyCapacityReinforcementAction(state, action) {
+    initCapacityState(state, state.params.seed);
+    if (action.type === "strengthen_edge") {
+      const k = edgeKey(action.u, action.v);
+      state.edge_capacity[k] = (state.edge_capacity[k] || 10) + action.mw;
+      if (!state.reinforced_edges.includes(k)) state.reinforced_edges.push(k);
+      return;
+    }
+    if (action.type === "add_edge") {
+      const G = stateToGraph(state);
+      if (!G.hasEdge(action.u, action.v)) state.edges.push([action.u, action.v]);
+      const k = edgeKey(action.u, action.v);
+      state.edge_capacity[k] = action.mw;
+      if (!state.new_edges.includes(k)) state.new_edges.push(k);
+      return;
+    }
+    if (action.type === "transit") {
+      if (state.params.n_vertices >= LETTERS.length) return;
+      applyReinforcementAction(state, { type: "transit", u: action.u, v: action.v });
+      const id = state.params.n_vertices - 1;
+      const k1 = edgeKey(id, action.u);
+      const k2 = edgeKey(id, action.v);
+      const mw = action.mw || 10;
+      state.edge_capacity[k1] = mw;
+      state.edge_capacity[k2] = mw;
+      if (!state.new_edges.includes(k1)) state.new_edges.push(k1);
+      if (!state.new_edges.includes(k2)) state.new_edges.push(k2);
+      return;
+    }
+    if (action.type === "generator") {
+      if (state.params.n_vertices >= LETTERS.length) return;
+      const mw = action.mw || action.production || 10;
+      applyReinforcementAction(state, { type: "generator", connect: action.connect, production: mw });
+      const id = state.params.n_vertices - 1;
+      const k = edgeKey(id, action.connect);
+      state.edge_capacity[k] = mw;
+      if (!state.new_edges.includes(k)) state.new_edges.push(k);
+    }
+  }
+
+  function buildCapacityPlanCandidates(state) {
+    const G = stateToGraph(state);
+    const costs = { edge: 1, transit: 3, generator: 5 };
+    const cands = [];
+    for (const [u, v] of G.edges) {
+      for (const mw of [10, 20, 30]) {
+        cands.push({ type: "strengthen_edge", u, v, mw, cost: blockCost(mw, 1), id: `se:${edgeKey(u, v)}:${mw}` });
+      }
+    }
+    for (const c of missingEdgeCandidates(state, costs)) {
+      for (const mw of [10, 20, 30]) {
+        cands.push({ type: "add_edge", u: c.u, v: c.v, mw, cost: blockCost(mw, 1), id: `ae:${c.u},${c.v}:${mw}` });
+      }
+    }
+    for (const c of transitNodeCandidates(state, costs, 6)) {
+      for (const mw of [10, 20]) {
+        cands.push({ type: "transit", u: c.u, v: c.v, mw, cost: blockCost(mw, 3), id: `tr:${c.id}:${mw}` });
+      }
+    }
+    for (const c of generatorNodeCandidates(state, costs, 4)) {
+      for (const mw of [10, 20, 30]) {
+        cands.push({ type: "generator", connect: c.connect, mw, production: mw, cost: blockCost(mw, 5), id: `ge:${c.id}:${mw}` });
+      }
+    }
+    return cands;
+  }
+
+  function countNewTopologyObjects(state, baseN) {
+    return Math.max(0, state.params.n_vertices - baseN);
+  }
+
+  function planMinimalCapacityReinforcement(stateJson) {
+    const state0 = cloneState(stateFromJson(stateJson));
+    const before = evaluateFeasibilityState(state0);
+    if (before.feasible) {
+      return {
+        feasible_already: true,
+        before,
+        after: before,
+        plan: [],
+        plan_actions: [],
+        total_cost: 0,
+        plan_display: [],
+        state_after: stateToJson(state0),
+      };
+    }
+    const candidates = buildCapacityPlanCandidates(state0);
+    let state = cloneState(state0);
+    const actions = [];
+    let totalCost = 0;
+    const used = new Set();
+    const baseN = state0.params.n_vertices;
+    for (let step = 0; step < 25; step++) {
+      const cur = evaluateFeasibilityState(state);
+      if (cur.feasible) break;
+      let best = null;
+      for (const cand of candidates) {
+        if (used.has(cand.id)) continue;
+        const trial = cloneState(state);
+        applyCapacityReinforcementAction(trial, cand);
+        const afterT = evaluateFeasibilityState(trial);
+        const score = improvementScore(cur, afterT);
+        if (score <= 0) continue;
+        const newObjs = countNewTopologyObjects(trial, baseN);
+        const eff = score / cand.cost;
+        if (
+          !best ||
+          eff > best.eff + 1e-9 ||
+          (Math.abs(eff - best.eff) < 1e-9 && afterT.served_total_mw > best.afterT.served_total_mw) ||
+          (Math.abs(eff - best.eff) < 1e-9 && afterT.served_total_mw === best.afterT.served_total_mw && newObjs < best.newObjs) ||
+          (Math.abs(eff - best.eff) < 1e-9 && afterT.served_total_mw === best.afterT.served_total_mw && newObjs === best.newObjs && cand.cost < best.cand.cost)
+        ) {
+          best = { cand, afterT, eff, newObjs };
+        }
+      }
+      if (!best) break;
+      applyCapacityReinforcementAction(state, best.cand);
+      actions.push(best.cand);
+      used.add(best.cand.id);
+      totalCost += best.cand.cost;
+    }
+    const after = evaluateFeasibilityState(state);
+    const plan = actions.map(a => ({ text: formatCapacityActionText(state0, a), cost: a.cost, type: a.type }));
+    return {
+      before,
+      after,
+      plan,
+      plan_actions: actions,
+      total_cost: totalCost,
+      plan_display: plan,
+      state_after: stateToJson(state),
+      feasible_after: after.feasible,
+    };
+  }
+
+  function optimizeCapacityReinforcement(stateJson, positions, renderOpts) {
+    const plan = planMinimalCapacityReinforcement(stateJson);
+    let result;
+    const stateAfter = plan.state_after ? stateFromJson(plan.state_after) : stateFromJson(stateJson);
+    const isLarge = stateAfter.params.scale === "large" || stateAfter.params.n_vertices > LETTERS.length;
+    if (plan.plan_actions.length) {
+      result = isLarge
+        ? evaluateStateLarge(stateAfter, new Set(), positions, renderOpts)
+        : evaluateState(stateAfter, new Set(), positions);
+      result.reinforcement_applied = true;
+    } else {
+      const state = stateFromJson(stateJson);
+      result = isLarge
+        ? evaluateStateLarge(state, new Set(), positions, renderOpts)
+        : evaluateState(state, new Set(), positions);
+    }
+    result.capacity_reinforcement = plan;
+    return result;
   }
 
   global.GraphCore = {
@@ -2205,12 +2750,16 @@
     planReinforcement,
     applyReinforcement,
     optimizeReinforcement,
+    planMinimalCapacityReinforcement,
+    optimizeCapacityReinforcement,
+    evaluateFeasibilityState,
     generateLarge,
     rebalanceLarge,
     showWeakestLarge,
     showWeakestEdgeLarge,
     generateLargeGeo,
     deriveGeoPool,
+    normalizeSolarPool,
     defaultRenderOpts,
     nodeName,
     MAX_LARGE_VERTICES,

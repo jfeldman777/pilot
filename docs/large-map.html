@@ -14,13 +14,29 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
     body { font-family: "Segoe UI", Arial, sans-serif; height: 100vh; display: flex; background: #f0f2f5; overflow: hidden; }
-    .sidebar { width: 310px; min-width: 310px; background: #fff; border-right: 1px solid #ddd; overflow-y: auto; z-index: 1000; }
+    .sidebar { width: 310px; min-width: 310px; background: #fff; border-right: 1px solid #ddd; overflow-y: auto; z-index: 1000; display: flex; flex-direction: column; }
     .sidebar h1 { font-size: 16px; padding: 12px 14px 4px; }
+    .sidebar p { font-size: 12px; color: #666; padding: 0 14px 8px; line-height: 1.4; }
     .sidebar a { font-size: 12px; color: #1976D2; padding: 0 14px 8px; display: block; }
+    .sidebar-mode-tabs { display: flex; gap: 6px; padding: 0 14px 12px; }
+    .mode-tab { flex: 1; padding: 8px 4px; border: 1px solid #ccc; border-radius: 6px; background: #f5f5f5; color: #444; font-size: 11px; font-weight: 600; cursor: pointer; line-height: 1.25; min-width: 0; }
+    .mode-tab:hover { background: #eee; }
+    .mode-tab.active { background: #2196F3; color: #fff; border-color: #2196F3; }
+    .sidebar-panel { padding: 0 14px 14px; }
+    .sidebar-panel.hidden { display: none; }
+    .sidebar-panel .field-desc { font-size: 11px; color: #666; line-height: 1.45; margin-bottom: 10px; }
+    .reinforce-hint { font-size: 10px; line-height: 1.45; padding: 8px; margin: 8px 0; border-radius: 6px; background: #f5f5f5; color: #555; border: 1px solid #e0e0e0; white-space: pre-line; }
+    .reinforce-hint.active { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+    .budget-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .price-hint { font-size: 10px; color: #777; margin: -4px 0 8px; line-height: 1.4; }
+    .panel-list { list-style: none; font-size: 11px; max-height: 120px; overflow-y: auto; }
+    .panel-list li { padding: 4px 0; border-bottom: 1px solid #eee; }
+    .panel-section { margin-bottom: 10px; }
+    .panel-section h3 { font-size: 11px; color: #555; margin-bottom: 4px; }
+    .field { margin-bottom: 10px; }
     .banner { margin: 0 14px 8px; padding: 8px; background: #fff8e1; border: 1px solid #ffe082; border-radius: 6px; font-size: 11px; line-height: 1.4; color: #5d4037; }
     .passport { margin: 0 14px 10px; padding: 8px; background: #e3f2fd; border: 1px solid #90caf9; border-radius: 6px; font-size: 10px; line-height: 1.5; font-family: monospace; }
     .panel { padding: 0 14px 14px; }
-    .field { margin-bottom: 10px; }
     .field label { display: block; font-size: 11px; font-weight: 600; margin-bottom: 3px; }
     .field input, .field select { width: 100%; padding: 7px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
     .preset-row { display: flex; gap: 5px; margin-bottom: 10px; }
@@ -40,7 +56,7 @@
     .info-panel h2 { font-size: 14px; margin-bottom: 8px; }
     .info-panel h3 { font-size: 11px; color: #555; margin: 8px 0 4px; }
     .info-panel ul { list-style: none; max-height: 100px; overflow-y: auto; }
-    .node-marker { width: 10px; height: 10px; border-radius: 50%; border: 1px solid #222; }
+    .node-marker { width: 14px; height: 14px; border-radius: 50%; border: 1px solid #222; }
     .node-marker.synth { border-style: dashed; }
     .node-marker.manual { background: #000 !important; }
     body.graph-only .sidebar, body.graph-only .info-panel { display: none !important; }
@@ -49,17 +65,23 @@
 </head>
 <body>
   <a href="home.html" class="home-btn" title="Домой">⌂</a>
-  <aside class="sidebar">
+  <aside class="sidebar" id="app-sidebar">
     <h1>Large geo screening</h1>
-    <p style="font-size:12px;color:#666;padding:0 16px 8px">Режим 4 из 8 · Screening · большой · карта</p>
-    <div class="banner">Математическая модель, synthetic links/capacity.<br>Не является инженерной оценкой режима энергосистемы.</div>
+    <p id="sidebar-desc">Режим 4 из 8 · Screening · большой · карта</p>
+    <div class="banner">Mathematical screening mode. Capacity, links and reinforcement costs are synthetic. This is not an engineering recommendation.</div>
     <div class="passport" id="passport">
       Координаты: —<br>
       Связи: SYNTHETIC<br>
       Мощности: SYNTHETIC<br>
       Расчёт: MATHEMATICAL SCREENING
     </div>
-    <div class="panel">
+    <div class="sidebar-mode-tabs">
+      <button type="button" id="mode-gen-btn" class="mode-tab active">Генерация</button>
+      <button type="button" id="mode-reinforce-btn" class="mode-tab">Бюджет</button>
+      <button type="button" id="mode-capacity-btn" class="mode-tab">Critical</button>
+    </div>
+
+    <div id="panel-generate" class="sidebar-panel">
       <div class="preset-row">
         <button type="button" data-n="100" class="active">100</button>
         <button type="button" data-n="300">300</button>
@@ -86,12 +108,39 @@
         <label><input type="checkbox" class="status-f" data-status="disabled" checked> Отключён</label>
         <label><input type="checkbox" class="status-f" data-status="failed" checked> Не обеспечен</label>
       </div>
-      <div class="error" id="error"></div>
+      <p id="pool-hint" style="font-size:10px;color:#888;margin-bottom:8px">Загрузка реестра…</p>
       <button type="button" id="generate-btn" class="primary" disabled>Построить</button>
       <button type="button" id="weakest-btn" class="secondary" disabled>Слабая вершина</button>
       <button type="button" id="weakest-edge-btn" class="secondary" disabled>Слабое ребро</button>
-      <p id="pool-hint" style="font-size:10px;color:#888;margin-top:8px">Загрузка реестра…</p>
     </div>
+
+    <div id="panel-reinforce-budget" class="sidebar-panel hidden">
+      <p class="field-desc">Лучший план при <b>фиксированном бюджете</b>: минимизировать ущерб от худшего одиночного отказа.</p>
+      <div class="field">
+        <label for="budget">Бюджет</label>
+        <input type="number" id="budget" value="10" min="0">
+      </div>
+      <p class="price-hint">Цены: источник = 5 · транзит = 3 · ребро = 1</p>
+      <div class="budget-row">
+        <div class="field"><label for="cost_generator">Источник</label><input type="number" id="cost_generator" value="5" min="1"></div>
+        <div class="field"><label for="cost_transit">Транзит</label><input type="number" id="cost_transit" value="3" min="1"></div>
+      </div>
+      <div class="field">
+        <label for="cost_edge">Ребро</label>
+        <input type="number" id="cost_edge" value="1" min="1">
+      </div>
+      <div class="reinforce-hint" id="reinforce-hint">Сначала постройте схему, затем «Рассчитать план»</div>
+      <button type="button" id="reinforce-btn" class="secondary" disabled>Рассчитать план</button>
+      <ul class="panel-list" id="reinforce-plan-list" style="margin-top:8px"><li>—</li></ul>
+    </div>
+
+    <div id="panel-reinforce-critical" class="sidebar-panel hidden">
+      <p class="field-desc">Минимальный план, покрывающий <b>critical</b> и устраняющий нарушения capacity. Блок +10 MW: ребро=1, транзит=3, генератор=5.</p>
+      <div class="reinforce-hint" id="capacity-reinforce-hint">После построения — см. feasible в stats</div>
+      <button type="button" id="capacity-reinforce-btn" class="secondary" disabled>Найти минимальный план</button>
+      <ul class="panel-list" id="capacity-plan-list" style="margin-top:8px"><li>—</li></ul>
+    </div>
+    <div class="sidebar-panel"><div class="error" id="error"></div></div>
   </aside>
 
   <main class="main">
@@ -102,32 +151,141 @@
       <span>Gen: <b id="st-g">—</b></span>
       <span>Cons: <b id="st-c">—</b></span>
       <span>Не обесп.: <b id="st-failed">—</b></span>
+      <span>Feasible: <b id="st-feasible">—</b></span>
+      <span>Crit↓: <b id="st-crit">—</b></span>
+      <span>Cap↓: <b id="st-cap">—</b></span>
       <span id="timing"></span>
     </div>
     <button type="button" id="toggle-panels-btn" class="panel-toggle">⛶ Граф</button>
   </main>
 
-  <aside class="info-panel">
+  <aside class="info-panel" id="app-info-panel">
     <h2>Состояние</h2>
-    <h3>Отключены <span id="manual-count">0</span></h3>
-    <ul id="manual-list"><li>—</li></ul>
-    <h3>Не обеспечены <span id="failed-count">0</span></h3>
-    <ul id="failed-list"><li>—</li></ul>
-    <h3>Анализ</h3>
-    <p id="weakest-text" style="font-size:11px;color:#666">—</p>
+    <div class="panel-section">
+      <h3>Отключены <span id="manual-count">0</span></h3>
+      <ul class="panel-list" id="manual-list"><li>—</li></ul>
+    </div>
+    <div class="panel-section">
+      <h3>Не обеспечены <span id="failed-count">0</span></h3>
+      <ul class="panel-list" id="failed-list"><li>—</li></ul>
+    </div>
+    <div class="panel-section">
+      <h3>Анализ</h3>
+      <p id="weakest-text" style="font-size:11px;color:#666">—</p>
+    </div>
+    <div class="panel-section">
+      <h3>План (бюджет)</h3>
+      <ul class="panel-list" id="reinforce-list"><li>—</li></ul>
+    </div>
+    <div class="panel-section">
+      <h3>План (critical)</h3>
+      <ul class="panel-list" id="capacity-plan-list-right"><li>—</li></ul>
+    </div>
   </aside>
 
-  <script src="graph_core.js?v=5"></script>
+  <script src="graph_core.js?v=8"></script>
   <script>
     const ROLE_COLORS = { generator: "#4CAF50", consumer: "#F44336", transit: "#2196F3" };
+    const reinforceBtn = document.getElementById("reinforce-btn");
+    const capacityReinforceBtn = document.getElementById("capacity-reinforce-btn");
+    const reinforceHint = document.getElementById("reinforce-hint");
+    const capacityReinforceHint = document.getElementById("capacity-reinforce-hint");
+    const reinforceList = document.getElementById("reinforce-list");
+    const reinforcePlanList = document.getElementById("reinforce-plan-list");
+    const capacityPlanList = document.getElementById("capacity-plan-list");
+    const capacityPlanListRight = document.getElementById("capacity-plan-list-right");
+    const modeGenBtn = document.getElementById("mode-gen-btn");
+    const modeReinforceBtn = document.getElementById("mode-reinforce-btn");
+    const modeCapacityBtn = document.getElementById("mode-capacity-btn");
+    const panelGenerate = document.getElementById("panel-generate");
+    const panelReinforceBudget = document.getElementById("panel-reinforce-budget");
+    const panelReinforceCritical = document.getElementById("panel-reinforce-critical");
+    const sidebarDesc = document.getElementById("sidebar-desc");
     let map = null, clusterGroup = null, edgesLayer = null;
     let graphState = null, disabledSet = new Set(), disabledEdgesSet = new Set();
-    let solarPool = [], lastData = null, rebalancing = false;
+    let solarPool = [], lastData = null, rebalancing = false, drawingMap = false;
     let markerById = new Map(), highlightNodes = [];
 
     function showError(m) { const e = document.getElementById("error"); e.textContent = m; e.style.display = m ? "block" : "none"; }
     function nodeId(r) { return typeof r === "string" ? parseInt(r, 10) : r; }
     function edgeKeyFromId(id) { const [u,v]=String(id).split("-").map(Number); return `${Math.min(u,v)},${Math.max(u,v)}`; }
+    function isValidCoord(lat, lng) {
+      return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+    }
+
+    function filterSolar(stations) {
+      return GraphCore.normalizeSolarPool
+        ? GraphCore.normalizeSolarPool(stations)
+        : (stations || []).filter(s => {
+            const lat = s.lat ?? s.latitude;
+            const lon = s.lon ?? s.lng ?? s.longitude;
+            return (s.type === "solar" || !s.type) && lat != null && lon != null;
+          }).map(s => ({ ...s, lat: +(s.lat ?? s.latitude), lon: +(s.lon ?? s.lng ?? s.longitude), type: s.type || "solar" }));
+    }
+
+    async function loadSolarSample() {
+      const paths = ["data/solar_sample.json", "./data/solar_sample.json", "docs/data/solar_sample.json"];
+      for (const path of paths) {
+        try {
+          const r = await fetch(path);
+          if (!r.ok) continue;
+          const data = await r.json();
+          if (Array.isArray(data) && data.length) return filterSolar(data);
+        } catch (_) {}
+      }
+      throw new Error("Не удалось загрузить solar_sample.json");
+    }
+
+    function loadRemoteRegistry() {
+      return new Promise((resolve, reject) => {
+        if (typeof ALL_STATIONS !== "undefined") {
+          resolve(filterSolar(ALL_STATIONS));
+          return;
+        }
+        const s = document.createElement("script");
+        s.src = "https://vde-map.vercel.app/all_stations.js";
+        const timer = setTimeout(() => {
+          s.remove();
+          reject(new Error("Таймаут загрузки реестра"));
+        }, 15000);
+        s.onload = () => {
+          clearTimeout(timer);
+          if (typeof ALL_STATIONS === "undefined") reject(new Error("ALL_STATIONS не найден"));
+          else resolve(filterSolar(ALL_STATIONS));
+        };
+        s.onerror = () => {
+          clearTimeout(timer);
+          reject(new Error("Сеть: vde-map недоступен"));
+        };
+        document.head.appendChild(s);
+      });
+    }
+
+    async function loadSolarPool() {
+      try {
+        const remote = await loadRemoteRegistry();
+        if (remote.length) return remote;
+      } catch (_) {}
+      return loadSolarSample();
+    }
+
+    async function loadGraphCore() {
+      if (typeof GraphCore !== "undefined" && GraphCore.generateLargeGeo) return true;
+      const paths = ["graph_core.js", "./graph_core.js", "docs/graph_core.js"];
+      for (const path of paths) {
+        try {
+          await new Promise((resolve, reject) => {
+            const s = document.createElement("script");
+            s.src = path + "?v=8";
+            s.onload = resolve;
+            s.onerror = reject;
+            document.head.appendChild(s);
+          });
+          if (typeof GraphCore !== "undefined" && GraphCore.generateLargeGeo) return true;
+        } catch (_) {}
+      }
+      return false;
+    }
 
     function getRenderOpts() {
       const zm = map ? map.getZoom() : 6;
@@ -159,6 +317,91 @@
         `Координаты: ${p.coords}<br>Связи: ${p.links}<br>Мощности: ${p.capacity}<br>Расчёт: ${p.model}`;
     }
 
+    function updateCapacityReinforcementHint(r) {
+      if (!r) {
+        capacityReinforceHint.textContent = "После построения — см. feasible в stats";
+        capacityReinforceHint.className = "reinforce-hint";
+        fillPlanList(capacityPlanList, null);
+        if (capacityPlanListRight) capacityPlanListRight.innerHTML = "<li>—</li>";
+        return;
+      }
+      const lines = r.plan?.length ? r.plan.map(p => `• ${p.text}`).join("\n") : "• без изменений";
+      capacityReinforceHint.textContent =
+        `План усиления · стоимость ${r.total_cost}\n${lines}\n\nДо: crit↓${r.before.critical_unserved_count} cap↓${r.before.capacity_violations_count} served ${r.before.served_total_mw} MW\nПосле: crit↓${r.after.critical_unserved_count} cap↓${r.after.capacity_violations_count} served ${r.after.served_total_mw} MW`;
+      capacityReinforceHint.className = "reinforce-hint active";
+      fillPlanList(capacityPlanList, r.plan);
+      fillPlanList(capacityPlanListRight, r.plan);
+    }
+
+    function getReinforcementOpts() {
+      return {
+        budget: +document.getElementById("budget").value || 10,
+        cost_edge: +document.getElementById("cost_edge").value || 1,
+        cost_transit: +document.getElementById("cost_transit").value || 3,
+        cost_generator: +document.getElementById("cost_generator").value || 5,
+      };
+    }
+
+    function setSidebarMode(mode) {
+      const isGen = mode === "generate";
+      const isBudget = mode === "reinforce";
+      const isCritical = mode === "capacity";
+      panelGenerate.classList.toggle("hidden", !isGen);
+      panelReinforceBudget.classList.toggle("hidden", !isBudget);
+      panelReinforceCritical.classList.toggle("hidden", !isCritical);
+      modeGenBtn.classList.toggle("active", isGen);
+      modeReinforceBtn.classList.toggle("active", isBudget);
+      modeCapacityBtn.classList.toggle("active", isCritical);
+      if (isBudget) {
+        sidebarDesc.textContent = "План укрепления при фиксированном бюджете · режим 4";
+      } else if (isCritical) {
+        sidebarDesc.textContent = "План усиления: critical + capacity · режим 4";
+      } else {
+        sidebarDesc.textContent = "Режим 4 из 8 · Screening · большой · карта";
+      }
+      localStorage.setItem("largeMapSidebarMode", mode);
+      showError("");
+    }
+
+    function fillPlanList(listEl, plan, emptyText) {
+      if (!listEl) return;
+      if (!plan?.length) {
+        listEl.innerHTML = `<li>${emptyText || "—"}</li>`;
+        return;
+      }
+      listEl.innerHTML = plan.map(p => `<li>${p.text}${p.cost != null ? ` <small>(cost ${p.cost})</small>` : ""}</li>`).join("");
+    }
+
+    function updateReinforcementHint(r) {
+      if (!r) {
+        reinforceHint.textContent = "Сначала постройте схему, затем «Рассчитать план»";
+        reinforceHint.className = "reinforce-hint";
+        if (reinforceList) reinforceList.innerHTML = "<li>—</li>";
+        if (reinforcePlanList) reinforcePlanList.innerHTML = "<li>—</li>";
+        return;
+      }
+      const lines = r.plan?.length
+        ? r.plan.map(p => `• ${p.text}`).join("\n")
+        : "• без изменений";
+      reinforceHint.textContent =
+        `Лучший план за ${r.budget} (${r.total_cost}):\n${lines}\n\nУщерб до: ${r.damage_before} · после: ${r.damage_after} стоков`;
+      reinforceHint.className = "reinforce-hint active";
+      fillPlanList(reinforceList, r.plan, "Без изменений");
+      fillPlanList(reinforcePlanList, r.plan, "Без изменений");
+    }
+
+    function applyResult(data, fit) {
+      drawGraph(data, fit);
+      if (data.reinforcement) updateReinforcementHint(data.reinforcement);
+      if (data.capacity_reinforcement) updateCapacityReinforcementHint(data.capacity_reinforcement);
+      else if (data.feasibility && !data.reinforcement) {
+        capacityReinforceHint.textContent = `Допустимость: ${data.feasibility.feasible ? "OK" : "INFEASIBLE"} · crit↓${data.feasibility.critical_unserved_count} cap↓${data.feasibility.capacity_violations_count}`;
+        capacityReinforceHint.className = "reinforce-hint";
+      }
+      reinforceBtn.disabled = false;
+      capacityReinforceBtn.disabled = false;
+    }
+
     function updateStats(s) {
       if (!s) return;
       document.getElementById("st-v").textContent = s.vertices;
@@ -166,82 +409,167 @@
       document.getElementById("st-g").textContent = s.generators ?? "—";
       document.getElementById("st-c").textContent = s.consumers ?? "—";
       document.getElementById("st-failed").textContent = s.failed_count ?? "—";
+      const f = s.feasibility;
+      if (f) {
+        document.getElementById("st-feasible").textContent = f.feasible ? "OK" : "NO";
+        document.getElementById("st-crit").textContent = f.critical_unserved_count;
+        document.getElementById("st-cap").textContent = f.capacity_violations_count;
+      }
     }
 
     function makeIcon(node) {
       const off = node.disabled_manual;
       const fail = node.disabled_failed;
       const col = off ? "#000" : fail ? "#bdbdbd" : ROLE_COLORS[node.role] || "#888";
-      const synth = node.synthetic ? " synth" : "";
+      const synth = node.synthetic || (node.coord_source && node.coord_source !== "OPEN_DATA") ? " synth" : "";
       const manual = off ? " manual" : "";
+      const border = node.is_critical ? "2px solid #FF9800" : "1px solid #222";
       return L.divIcon({
         className: "",
-        html: `<div class="node-marker${synth}${manual}" style="background:${col}"></div>`,
-        iconSize: [10, 10],
-        iconAnchor: [5, 5],
+        html: `<div class="node-marker${synth}${manual}" style="background:${col};border:${border}"></div>`,
+        iconSize: [14, 14],
+        iconAnchor: [7, 7],
       });
     }
 
+    function nodePopup(node, id) {
+      const tip = (node.title || node.tooltip || (node.station_name ? `${node.station_name} (#${id})` : `#${id} ${node.role}`)).replace(/\n/g, "<br>");
+      const src = node.coord_source || (node.synthetic ? "SYNTHETIC_DERIVED" : "OPEN_DATA");
+      return `<b>#${id}</b> · ${node.role}<br>${node.station_name ? `${node.station_name}<br>` : ""}<small>${src}</small><br>${tip}`;
+    }
+
+    let zoomRebalanceTimer = null;
+
+    function cancelMapJobs() {
+      clearTimeout(zoomRebalanceTimer);
+      zoomRebalanceTimer = null;
+    }
+
+    function unspiderfyCluster() {
+      if (!clusterGroup) return;
+      try {
+        if (typeof clusterGroup.unspiderfy === "function") clusterGroup.unspiderfy();
+      } catch (_) {}
+    }
+
+    function resetClusterGroup() {
+      if (!map) return;
+      unspiderfyCluster();
+      if (clusterGroup) {
+        try { map.removeLayer(clusterGroup); } catch (_) {}
+        try { clusterGroup.clearLayers(); } catch (_) {}
+      }
+      clusterGroup = L.markerClusterGroup({ maxClusterRadius: 50, disableClusteringAtZoom: 12, showCoverageOnHover: false });
+      map.addLayer(clusterGroup);
+    }
+
+    function clearMapLayers(fullReset) {
+      cancelMapJobs();
+      if (fullReset) {
+        resetClusterGroup();
+        if (edgesLayer) edgesLayer.clearLayers();
+        return;
+      }
+      unspiderfyCluster();
+      if (clusterGroup) {
+        try { clusterGroup.clearLayers(); } catch (_) { resetClusterGroup(); }
+      }
+      if (edgesLayer) edgesLayer.clearLayers();
+    }
+
+    async function waitMapIdle() {
+      for (let i = 0; i < 80 && (rebalancing || drawingMap); i++) {
+        await new Promise(r => setTimeout(r, 25));
+      }
+    }
+
+    function focusMarker(m) {
+      if (!m || !map) return;
+      try {
+        const ll = m.getLatLng();
+        map.setView(ll, Math.max(map.getZoom(), 10), { animate: false });
+        m.openTooltip();
+      } catch (_) {}
+    }
+
     function drawGraph(data, fit) {
-      lastData = data;
-      graphState = data.state;
-      disabledSet = new Set((data.disabled || []).map(nodeId));
-      disabledEdgesSet = new Set((data.disabled_edges || []).map(e => edgeKeyFromId(`${e[0]}-${e[1]}`)));
-      updateStats(data.summary);
-      updatePassport(data.state.passport || graphState?.passport);
-      const manual = [], failed = [];
-      for (const n of data.nodes) {
-        if (n.disabled_manual) manual.push(n.id);
-        else if (n.disabled_failed) failed.push(n.id);
-      }
-      document.getElementById("manual-count").textContent = manual.length;
-      document.getElementById("failed-count").textContent = failed.length;
-      document.getElementById("manual-list").innerHTML = manual.slice(0, 30).map(x => `<li>#${x}</li>`).join("") || "<li>—</li>";
-      document.getElementById("failed-list").innerHTML = failed.slice(0, 30).map(x => `<li>#${x}</li>`).join("") || "<li>—</li>";
+      if (!map) initMap();
+      if (!clusterGroup || !edgesLayer) initMap();
+      drawingMap = true;
+      try {
+        lastData = data;
+        disabledSet = new Set((data.disabled || []).map(nodeId));
+        disabledEdgesSet = new Set((data.disabled_edges || []).map(e => edgeKeyFromId(`${e[0]}-${e[1]}`)));
+        updateStats(data.summary);
+        updatePassport(data.state.passport || data.state?.passport);
+        if (data.capacity_reinforcement) updateCapacityReinforcementHint(data.capacity_reinforcement);
+        const manual = [], failed = [];
+        const geoNodes = data.nodes.filter(n => isValidCoord(n.lat, n.lng));
+        if (!geoNodes.length && data.nodes.length) {
+          showError("Узлы без координат — проверьте graph_core.js и пул СЭС");
+          return;
+        }
+        showError("");
+        for (const n of geoNodes) {
+          if (n.disabled_manual) manual.push(n.id);
+          else if (n.disabled_failed) failed.push(n.id);
+        }
+        document.getElementById("manual-count").textContent = manual.length;
+        document.getElementById("failed-count").textContent = failed.length;
+        document.getElementById("manual-list").innerHTML = manual.slice(0, 30).map(x => `<li>#${x}</li>`).join("") || "<li>—</li>";
+        document.getElementById("failed-list").innerHTML = failed.slice(0, 30).map(x => `<li>#${x}</li>`).join("") || "<li>—</li>";
 
-      clusterGroup.clearLayers();
-      edgesLayer.clearLayers();
-      markerById.clear();
-      const nodeMap = new Map(data.nodes.map(n => [nodeId(n.id), n]));
+        clearMapLayers(!!fit);
+        markerById.clear();
+        const nodeMap = new Map(geoNodes.map(n => [nodeId(n.id), n]));
 
-      for (const e of data.edges) {
-        const from = nodeMap.get(nodeId(e.from));
-        const to = nodeMap.get(nodeId(e.to));
-        if (!from || !to) continue;
-        const edgeOff = e.disabled_manual_edge;
-        const line = L.polyline([[from.lat, from.lng], [to.lat, to.lng]], {
-          color: edgeOff ? "#e65100" : "#555",
-          weight: edgeOff ? 2 : 1,
-          opacity: 0.5,
-          dashArray: edgeOff ? "6 6" : null,
-        });
-        edgesLayer.addLayer(line);
-      }
+        for (const e of data.edges) {
+          const from = nodeMap.get(nodeId(e.from));
+          const to = nodeMap.get(nodeId(e.to));
+          if (!from || !to) continue;
+          const edgeOff = e.disabled_manual_edge;
+          const line = L.polyline([[from.lat, from.lng], [to.lat, to.lng]], {
+            color: e.capacity_violation ? "#c62828" : edgeOff ? "#e65100" : e.reinforced_edge ? "#1565C0" : e.new_edge ? "#7B1FA2" : "#555",
+            weight: e.capacity_violation ? 3 : edgeOff ? 2 : 1,
+            opacity: 0.65,
+            dashArray: edgeOff || e.new_edge ? "6 6" : null,
+          });
+          edgesLayer.addLayer(line);
+        }
 
-      for (const node of data.nodes) {
-        const id = nodeId(node.id);
-        const m = L.marker([node.lat, node.lng], { icon: makeIcon(node) });
-        const tip = node.station_name ? `${node.station_name} (#${id})` : `#${id} ${node.role}`;
-        m.bindTooltip(tip, { direction: "top" });
-        if (node.synthetic) m.bindPopup(`<b>SYNTHETIC_DERIVED</b><br>${tip}`);
-        m.on("click", () => {
-          if (rebalancing) return;
-          highlightNodes = [id];
-          if (disabledSet.has(id)) disabledSet.delete(id); else disabledSet.add(id);
-          rebalance();
-        });
-        clusterGroup.addLayer(m);
-        markerById.set(id, m);
-      }
+        for (const node of geoNodes) {
+          const id = nodeId(node.id);
+          const m = L.marker([node.lat, node.lng], { icon: makeIcon(node), riseOnHover: true });
+          const tip = (node.title || node.tooltip || (node.station_name ? `${node.station_name} (#${id})` : `#${id} ${node.role}`)).replace(/\n/g, "<br>");
+          m.bindTooltip(tip, { direction: "top", offset: [0, -8] });
+          m.bindPopup(nodePopup(node, id));
+          m.on("click", () => {
+            if (rebalancing || drawingMap) return;
+            m.openPopup();
+            highlightNodes = [id];
+            if (disabledSet.has(id)) disabledSet.delete(id); else disabledSet.add(id);
+            rebalance();
+          });
+          clusterGroup.addLayer(m);
+          markerById.set(id, m);
+        }
 
-      if (fit && data.nodes.length) {
-        const b = L.latLngBounds(data.nodes.map(n => [n.lat, n.lng]));
-        map.fitBounds(b.pad(0.12));
+        if (fit && geoNodes.length) {
+          map.invalidateSize();
+          const b = L.latLngBounds(geoNodes.map(n => [n.lat, n.lng]));
+          if (b.isValid()) map.fitBounds(b.pad(0.12), { animate: false, padding: [24, 24] });
+          setTimeout(() => map.invalidateSize(), 150);
+        }
+        graphState = data.state;
+      } catch (e) {
+        showError(e.message || String(e));
+      } finally {
+        drawingMap = false;
       }
     }
 
     function rebalance() {
-      if (!graphState || rebalancing) return;
+      if (!graphState || rebalancing || drawingMap) return;
       rebalancing = true;
       requestAnimationFrame(() => {
         try {
@@ -256,33 +584,37 @@
       if (map) return;
       map = L.map("map").setView([48.5, 31.2], 6);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18 }).addTo(map);
-      clusterGroup = L.markerClusterGroup({ maxClusterRadius: 50, disableClusteringAtZoom: 12 });
+      clusterGroup = L.markerClusterGroup({ maxClusterRadius: 50, disableClusteringAtZoom: 12, showCoverageOnHover: false });
       map.addLayer(clusterGroup);
       edgesLayer = L.layerGroup().addTo(map);
-      map.on("zoomend", () => { if (graphState) rebalance(); });
+      map.on("zoomend", () => {
+        if (!graphState || drawingMap || rebalancing) return;
+        clearTimeout(zoomRebalanceTimer);
+        zoomRebalanceTimer = setTimeout(() => {
+          if (!graphState || drawingMap || rebalancing) return;
+          rebalance();
+        }, 80);
+      });
       setTimeout(() => map.invalidateSize(), 100);
     }
 
     async function loadPool() {
+      const hint = document.getElementById("pool-hint");
       try {
-        const stations = await new Promise((resolve, reject) => {
-          const s = document.createElement("script");
-          s.src = "https://vde-map.vercel.app/all_stations.js";
-          s.onload = () => resolve((window.ALL_STATIONS || []).filter(x => x.type === "solar"));
-          s.onerror = reject;
-          document.head.appendChild(s);
-        });
-        solarPool = stations;
-      } catch (_) {
-        const r = await fetch("data/solar_sample.json");
-        solarPool = await r.json();
+        solarPool = await loadSolarPool();
+      } catch (e) {
+        solarPool = [];
       }
-      document.getElementById("pool-hint").textContent = `Пул: ${solarPool.length} СЕС`;
+      const src = solarPool.length > 200 ? "vde-map" : solarPool.length ? "sample" : "fallback";
+      hint.textContent = `Пул: ${solarPool.length} СЭС (${src})`;
       document.getElementById("generate-btn").disabled = false;
     }
 
     async function generate() {
       showError("");
+      cancelMapJobs();
+      graphState = null;
+      await waitMapIdle();
       const btn = document.getElementById("generate-btn");
       btn.disabled = true;
       const t0 = performance.now();
@@ -292,14 +624,20 @@
       await new Promise(r => setTimeout(r, 10));
       try {
         initMap();
-        const data = GraphCore.generateLargeGeo(solarPool, {
+        const renderOpts = getRenderOpts();
+        const raw = GraphCore.generateLargeGeo(solarPool, {
           count: +document.getElementById("n_stations").value,
           seed: +document.getElementById("seed").value,
         });
-        drawGraph(data, true);
+        const data = GraphCore.rebalanceLarge(raw.state, [], null, renderOpts);
+        if (!data.nodes.length) throw new Error("Граф без узлов на карте");
+        applyResult(data, true);
         document.getElementById("timing").textContent = `${Math.round(performance.now() - t0)} мс`;
         document.getElementById("weakest-btn").disabled = false;
         document.getElementById("weakest-edge-btn").disabled = false;
+        document.getElementById("weakest-text").textContent = "—";
+        updateReinforcementHint(null);
+        updateCapacityReinforcementHint(null);
       } catch (e) { showError(e.message); }
       finally { btn.disabled = false; }
     }
@@ -313,8 +651,7 @@
         const data = GraphCore.showWeakestLarge(stateWithDisables(), [...disabledSet], null, getRenderOpts());
         highlightNodes = [data.weakest.vertex];
         drawGraph(data, false);
-        const n = markerById.get(data.weakest.vertex);
-        if (n) { clusterGroup.zoomToShowLayer(n, () => n.openTooltip()); }
+        focusMarker(markerById.get(data.weakest.vertex));
         const partial = data.weakest.partial ? ` (1/${data.weakest.sample_step})` : "";
         document.getElementById("weakest-text").textContent = `#${data.weakest.vertex} → ${data.weakest.failed_count} стоков${partial}`;
         document.getElementById("timing").textContent = `${Math.round(performance.now() - t0)} мс`;
@@ -334,6 +671,50 @@
       finally { btn.disabled = false; }
     }
 
+    async function showReinforcementPlan() {
+      if (!graphState) { showError("Сначала постройте схему"); return; }
+      showError("");
+      reinforceBtn.disabled = true;
+      reinforceBtn.textContent = "Расчёт…";
+      const t0 = performance.now();
+      await new Promise(r => setTimeout(r, 10));
+      try {
+        const raw = GraphCore.optimizeReinforcement(stateWithDisables(), getReinforcementOpts(), null);
+        const data = GraphCore.rebalanceLarge(raw.state, [], null, getRenderOpts());
+        data.reinforcement = raw.reinforcement;
+        disabledSet = new Set();
+        disabledEdgesSet = new Set();
+        applyResult(data, false);
+        setSidebarMode("reinforce");
+        document.getElementById("timing").textContent = `План (бюджет): ${Math.round(performance.now() - t0)} мс`;
+      } catch (e) { showError(e.message); }
+      finally {
+        reinforceBtn.disabled = false;
+        reinforceBtn.textContent = "Рассчитать план";
+      }
+    }
+
+    async function showCapacityReinforcementPlan() {
+      if (!graphState) return;
+      const btn = document.getElementById("capacity-reinforce-btn");
+      btn.disabled = true;
+      btn.textContent = "Поиск…";
+      const t0 = performance.now();
+      await new Promise(r => setTimeout(r, 10));
+      try {
+        const data = GraphCore.optimizeCapacityReinforcement(stateWithDisables(), null, getRenderOpts());
+        disabledSet = new Set();
+        disabledEdgesSet = new Set();
+        applyResult(data, false);
+        setSidebarMode("capacity");
+        document.getElementById("timing").textContent = `План (critical): ${Math.round(performance.now() - t0)} мс`;
+      } catch (e) { showError(e.message); }
+      finally {
+        btn.disabled = false;
+        btn.textContent = "Найти минимальный план";
+      }
+    }
+
     document.querySelectorAll(".preset-row button").forEach(b => {
       b.addEventListener("click", () => {
         document.querySelectorAll(".preset-row button").forEach(x => x.classList.remove("active"));
@@ -344,6 +725,11 @@
     document.getElementById("generate-btn").addEventListener("click", generate);
     document.getElementById("weakest-btn").addEventListener("click", showWeakest);
     document.getElementById("weakest-edge-btn").addEventListener("click", showWeakestEdge);
+    document.getElementById("reinforce-btn").addEventListener("click", showReinforcementPlan);
+    document.getElementById("capacity-reinforce-btn").addEventListener("click", showCapacityReinforcementPlan);
+    modeGenBtn.addEventListener("click", () => setSidebarMode("generate"));
+    modeReinforceBtn.addEventListener("click", () => setSidebarMode("reinforce"));
+    modeCapacityBtn.addEventListener("click", () => setSidebarMode("capacity"));
     document.querySelectorAll(".type-f, .status-f, #edge_mode, #flow_threshold").forEach(el => el.addEventListener("change", () => graphState && rebalance()));
     document.getElementById("toggle-panels-btn").addEventListener("click", () => {
       document.body.classList.toggle("graph-only");
@@ -351,8 +737,18 @@
     });
 
     (async () => {
-      await loadPool();
+      if (typeof L === "undefined") {
+        showError("Не загрузился Leaflet. Проверьте интернет.");
+        return;
+      }
+      if (!(await loadGraphCore())) {
+        showError("Не загружен graph_core.js. Запустите python app.py → http://127.0.0.1:5001");
+        return;
+      }
       initMap();
+      await loadPool();
+      const savedMode = localStorage.getItem("largeMapSidebarMode");
+      setSidebarMode(savedMode === "reinforce" || savedMode === "capacity" ? savedMode : "generate");
     })();
   </script>
 </body>

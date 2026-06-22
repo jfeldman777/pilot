@@ -9,9 +9,24 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: "Segoe UI", Arial, sans-serif; height: 100vh; display: flex; background: #f0f2f5; color: #222; overflow: hidden; }
-    .sidebar { width: 320px; min-width: 320px; background: #fff; border-right: 1px solid #ddd; overflow-y: auto; z-index: 10; }
+    .sidebar { width: 320px; min-width: 320px; background: #fff; border-right: 1px solid #ddd; overflow-y: auto; z-index: 10; display: flex; flex-direction: column; }
     .sidebar h1 { font-size: 17px; padding: 14px 16px 6px; }
     .sidebar p, .sidebar a { font-size: 12px; color: #666; padding: 0 16px 8px; display: block; line-height: 1.4; }
+    .sidebar-mode-tabs { display: flex; gap: 6px; padding: 0 16px 12px; }
+    .mode-tab { flex: 1; padding: 8px 4px; border: 1px solid #ccc; border-radius: 6px; background: #f5f5f5; color: #444; font-size: 11px; font-weight: 600; cursor: pointer; line-height: 1.25; min-width: 0; }
+    .mode-tab:hover { background: #eee; }
+    .mode-tab.active { background: #2196F3; color: #fff; border-color: #2196F3; }
+    .sidebar-panel { padding: 0 16px 16px; }
+    .sidebar-panel.hidden { display: none; }
+    .sidebar-panel .field-desc { font-size: 12px; color: #666; line-height: 1.45; margin-bottom: 12px; }
+    .reinforce-hint { font-size: 11px; line-height: 1.45; padding: 8px; margin: 8px 0; border-radius: 6px; background: #f5f5f5; color: #555; border: 1px solid #e0e0e0; white-space: pre-line; }
+    .reinforce-hint.active { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+    .budget-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .price-hint { font-size: 11px; color: #777; margin: -4px 0 10px; line-height: 1.4; }
+    .panel-list { list-style: none; font-size: 11px; max-height: 140px; overflow-y: auto; }
+    .panel-list li { padding: 4px 0; border-bottom: 1px solid #eee; }
+    .panel-section { margin-bottom: 12px; }
+    .panel-section h3 { font-size: 11px; color: #555; margin-bottom: 6px; }
   .banner { margin: 0 16px 10px; padding: 8px 10px; background: #fff8e1; border: 1px solid #ffe082; border-radius: 6px; font-size: 11px; line-height: 1.4; color: #5d4037; }
     .panel { padding: 0 16px 16px; }
     .field { margin-bottom: 10px; }
@@ -48,11 +63,17 @@
 </head>
 <body>
   <a href="home.html" class="home-btn" title="Домой">⌂</a>
-  <aside class="sidebar">
+  <aside class="sidebar" id="app-sidebar">
     <h1>Large screening — схема</h1>
-    <p style="font-size:12px;color:#666;padding:0 16px 8px">Режим 3 из 8 · Screening · большой · схема</p>
-    <div class="banner">Математическая модель, synthetic links/capacity.<br>Не является инженерной оценкой режима энергосистемы.</div>
-    <div class="panel">
+    <p id="sidebar-desc">Режим 3 из 8 · Screening · большой · схема</p>
+    <div class="banner">Mathematical screening mode. Capacity, links and reinforcement costs are synthetic. This is not an engineering recommendation.</div>
+    <div class="sidebar-mode-tabs">
+      <button type="button" id="mode-gen-btn" class="mode-tab active">Генерация</button>
+      <button type="button" id="mode-reinforce-btn" class="mode-tab">Бюджет</button>
+      <button type="button" id="mode-capacity-btn" class="mode-tab">Critical</button>
+    </div>
+
+    <div id="panel-generate" class="sidebar-panel">
       <div class="preset-row">
         <button type="button" data-n="100" class="active">100</button>
         <button type="button" data-n="300">300</button>
@@ -102,11 +123,38 @@
         <label><input type="checkbox" class="status-f" data-status="disabled" checked> Отключён</label>
         <label><input type="checkbox" class="status-f" data-status="failed" checked> Не обеспечен</label>
       </div>
-      <div class="error" id="error"></div>
       <button type="button" id="generate-btn" class="primary">Сгенерировать</button>
       <button type="button" id="weakest-btn" class="secondary" disabled>Слабая вершина</button>
       <button type="button" id="weakest-edge-btn" class="secondary" disabled>Слабое ребро</button>
     </div>
+
+    <div id="panel-reinforce-budget" class="sidebar-panel hidden">
+      <p class="field-desc">Лучший план при <b>фиксированном бюджете</b>: минимизировать ущерб от худшего одиночного отказа.</p>
+      <div class="field">
+        <label for="budget">Бюджет</label>
+        <input type="number" id="budget" value="10" min="0">
+      </div>
+      <p class="price-hint">Цены: источник = 5 · транзит = 3 · ребро = 1</p>
+      <div class="budget-row">
+        <div class="field"><label for="cost_generator">Источник</label><input type="number" id="cost_generator" value="5" min="1"></div>
+        <div class="field"><label for="cost_transit">Транзит</label><input type="number" id="cost_transit" value="3" min="1"></div>
+      </div>
+      <div class="field">
+        <label for="cost_edge">Ребро</label>
+        <input type="number" id="cost_edge" value="1" min="1">
+      </div>
+      <div class="reinforce-hint" id="reinforce-hint">Сначала сгенерируйте граф, затем «Рассчитать план»</div>
+      <button type="button" id="reinforce-btn" class="secondary" disabled>Рассчитать план</button>
+      <ul class="panel-list" id="reinforce-plan-list" style="margin-top:8px"><li>—</li></ul>
+    </div>
+
+    <div id="panel-reinforce-critical" class="sidebar-panel hidden">
+      <p class="field-desc">Минимальный план, покрывающий <b>critical</b> и устраняющий нарушения capacity. Блок +10 MW: ребро=1, транзит=3, генератор=5.</p>
+      <div class="reinforce-hint" id="capacity-reinforce-hint">После генерации — см. feasible в строке состояния</div>
+      <button type="button" id="capacity-reinforce-btn" class="secondary" disabled>Найти минимальный план</button>
+      <ul class="panel-list" id="capacity-plan-list" style="margin-top:8px"><li>—</li></ul>
+    </div>
+    <div class="sidebar-panel"><div class="error" id="error"></div></div>
   </aside>
 
   <main class="main">
@@ -119,6 +167,9 @@
         <span class="stat">Tr: <b id="st-t">—</b></span>
         <span class="stat">Обслужено: <b id="st-served">—</b></span>
         <span class="stat">Не обесп.: <b id="st-failed">—</b></span>
+        <span class="stat">Feasible: <b id="st-feasible">—</b></span>
+        <span class="stat">Crit↓: <b id="st-crit">—</b></span>
+        <span class="stat">Cap↓: <b id="st-cap">—</b></span>
       </div>
       <span id="timing" style="font-size:11px;color:#888"></span>
     </div>
@@ -129,20 +180,49 @@
     </div>
   </main>
 
-  <aside class="info-panel">
+  <aside class="info-panel" id="app-info-panel">
     <h2>Состояние</h2>
-    <h3>Отключены <span id="manual-count">0</span></h3>
-    <ul id="manual-list"><li>—</li></ul>
-    <h3>Не обеспечены <span id="failed-count">0</span></h3>
-    <ul id="failed-list"><li>—</li></ul>
-    <h3 id="weakest-hint">Слабость</h3>
-    <p id="weakest-text" style="font-size:11px;color:#666">—</p>
+    <div class="panel-section">
+      <h3>Отключены <span id="manual-count">0</span></h3>
+      <ul class="panel-list" id="manual-list"><li>—</li></ul>
+    </div>
+    <div class="panel-section">
+      <h3>Не обеспечены <span id="failed-count">0</span></h3>
+      <ul class="panel-list" id="failed-list"><li>—</li></ul>
+    </div>
+    <div class="panel-section">
+      <h3>Слабость</h3>
+      <p id="weakest-text" style="font-size:11px;color:#666">—</p>
+    </div>
+    <div class="panel-section">
+      <h3>План (бюджет)</h3>
+      <ul class="panel-list" id="reinforce-list"><li>—</li></ul>
+    </div>
+    <div class="panel-section">
+      <h3>План (critical)</h3>
+      <ul class="panel-list" id="capacity-plan-list-right"><li>—</li></ul>
+    </div>
   </aside>
 
-  <script src="graph_core.js?v=6"></script>
+  <script src="graph_core.js?v=8"></script>
   <script>
     const container = document.getElementById("graph");
     const errorEl = document.getElementById("error");
+    const reinforceBtn = document.getElementById("reinforce-btn");
+    const capacityReinforceBtn = document.getElementById("capacity-reinforce-btn");
+    const reinforceHint = document.getElementById("reinforce-hint");
+    const capacityReinforceHint = document.getElementById("capacity-reinforce-hint");
+    const reinforceList = document.getElementById("reinforce-list");
+    const reinforcePlanList = document.getElementById("reinforce-plan-list");
+    const capacityPlanList = document.getElementById("capacity-plan-list");
+    const capacityPlanListRight = document.getElementById("capacity-plan-list-right");
+    const modeGenBtn = document.getElementById("mode-gen-btn");
+    const modeReinforceBtn = document.getElementById("mode-reinforce-btn");
+    const modeCapacityBtn = document.getElementById("mode-capacity-btn");
+    const panelGenerate = document.getElementById("panel-generate");
+    const panelReinforceBudget = document.getElementById("panel-reinforce-budget");
+    const panelReinforceCritical = document.getElementById("panel-reinforce-critical");
+    const sidebarDesc = document.getElementById("sidebar-desc");
     let network = null, nodesDS = null, edgesDS = null;
     let graphState = null, disabledSet = new Set(), disabledEdgesSet = new Set();
     let highlightNodes = [], rebalancing = false, lastToggle = 0;
@@ -155,26 +235,7 @@
     };
 
     function drawNodeLabels(ctx) {
-      if (!network || !nodesDS) return;
-      const positions = network.getPositions();
-      for (const n of nodesDS.get()) {
-        if (!n.show_label) continue;
-        const pos = positions[n.id];
-        if (!pos) continue;
-        const text = n.display_name ?? String(n.id);
-        const r = n.size || 10;
-        const fontSize = Math.max(7, Math.min(16, r * 0.9));
-        ctx.font = `bold ${fontSize}px Arial, sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        const off = n.disabled_manual || n.disabled_failed;
-        const fill = off ? (n.role_color || "#333") : "#ffffff";
-        ctx.lineWidth = Math.max(1.5, fontSize * 0.22);
-        ctx.strokeStyle = off ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.6)";
-        ctx.strokeText(text, pos.x, pos.y);
-        ctx.fillStyle = fill;
-        ctx.fillText(text, pos.x, pos.y);
-      }
+      return;
     }
 
     function bindLabelDrawing() {
@@ -217,6 +278,97 @@
       document.getElementById("st-t").textContent = s.transit ?? "—";
       document.getElementById("st-served").textContent = s.served_consumption ?? "—";
       document.getElementById("st-failed").textContent = s.failed_count ?? "—";
+      const f = s.feasibility;
+      if (f) {
+        document.getElementById("st-feasible").textContent = f.feasible ? "OK" : "NO";
+        document.getElementById("st-crit").textContent = f.critical_unserved_count;
+        document.getElementById("st-cap").textContent = f.capacity_violations_count;
+      }
+    }
+
+    function updateCapacityReinforcementHint(r) {
+      if (!r) {
+        capacityReinforceHint.textContent = "После генерации — см. feasible в строке состояния";
+        capacityReinforceHint.className = "reinforce-hint";
+        fillPlanList(capacityPlanList, null);
+        if (capacityPlanListRight) capacityPlanListRight.innerHTML = "<li>—</li>";
+        return;
+      }
+      const lines = r.plan?.length ? r.plan.map(p => `• ${p.text}`).join("\n") : "• без изменений";
+      capacityReinforceHint.textContent =
+        `План усиления · стоимость ${r.total_cost}\n${lines}\n\nДо: crit↓${r.before.critical_unserved_count} cap↓${r.before.capacity_violations_count} served ${r.before.served_total_mw} MW\nПосле: crit↓${r.after.critical_unserved_count} cap↓${r.after.capacity_violations_count} served ${r.after.served_total_mw} MW`;
+      capacityReinforceHint.className = "reinforce-hint active";
+      fillPlanList(capacityPlanList, r.plan);
+      fillPlanList(capacityPlanListRight, r.plan);
+    }
+
+    function getReinforcementOpts() {
+      return {
+        budget: +document.getElementById("budget").value || 10,
+        cost_edge: +document.getElementById("cost_edge").value || 1,
+        cost_transit: +document.getElementById("cost_transit").value || 3,
+        cost_generator: +document.getElementById("cost_generator").value || 5,
+      };
+    }
+
+    function setSidebarMode(mode) {
+      const isGen = mode === "generate";
+      const isBudget = mode === "reinforce";
+      const isCritical = mode === "capacity";
+      panelGenerate.classList.toggle("hidden", !isGen);
+      panelReinforceBudget.classList.toggle("hidden", !isBudget);
+      panelReinforceCritical.classList.toggle("hidden", !isCritical);
+      modeGenBtn.classList.toggle("active", isGen);
+      modeReinforceBtn.classList.toggle("active", isBudget);
+      modeCapacityBtn.classList.toggle("active", isCritical);
+      if (isBudget) {
+        sidebarDesc.textContent = "План укрепления при фиксированном бюджете · режим 3";
+      } else if (isCritical) {
+        sidebarDesc.textContent = "План усиления: critical + capacity · режим 3";
+      } else {
+        sidebarDesc.textContent = "Режим 3 из 8 · Screening · большой · схема";
+      }
+      localStorage.setItem("largeSidebarMode", mode);
+      showError("");
+    }
+
+    function fillPlanList(listEl, plan, emptyText) {
+      if (!listEl) return;
+      if (!plan?.length) {
+        listEl.innerHTML = `<li>${emptyText || "—"}</li>`;
+        return;
+      }
+      listEl.innerHTML = plan.map(p => `<li>${p.text}${p.cost != null ? ` <small>(cost ${p.cost})</small>` : ""}</li>`).join("");
+    }
+
+    function updateReinforcementHint(r) {
+      if (!r) {
+        reinforceHint.textContent = "Сначала сгенерируйте граф, затем «Рассчитать план»";
+        reinforceHint.className = "reinforce-hint";
+        if (reinforceList) reinforceList.innerHTML = "<li>—</li>";
+        if (reinforcePlanList) reinforcePlanList.innerHTML = "<li>—</li>";
+        return;
+      }
+      const lines = r.plan?.length
+        ? r.plan.map(p => `• ${p.text}`).join("\n")
+        : "• без изменений (текущая сеть уже оптимальна в рамках бюджета)";
+      reinforceHint.textContent =
+        `Лучший план за ${r.budget} (потрачено ${r.total_cost}):\n${lines}\n\nУщерб до: ${r.damage_before} потребителей\nУщерб после: ${r.damage_after} потребителей`;
+      reinforceHint.className = "reinforce-hint active";
+      fillPlanList(reinforceList, r.plan, "Без изменений");
+      fillPlanList(reinforcePlanList, r.plan, "Без изменений");
+    }
+
+    function applyResult(data, fit) {
+      drawData(data, fit);
+      if (data.reinforcement) updateReinforcementHint(data.reinforcement);
+      if (data.capacity_reinforcement) updateCapacityReinforcementHint(data.capacity_reinforcement);
+      else if (data.feasibility && !data.reinforcement) {
+        capacityReinforceHint.textContent = `Допустимость: ${data.feasibility.feasible ? "OK" : "INFEASIBLE"} · crit↓${data.feasibility.critical_unserved_count} cap↓${data.feasibility.capacity_violations_count}`;
+        capacityReinforceHint.className = "reinforce-hint";
+      }
+      reinforceBtn.disabled = false;
+      capacityReinforceBtn.disabled = false;
     }
 
     function updatePanel(data) {
@@ -240,6 +392,7 @@
       disabledEdgesSet = new Set((data.disabled_edges || []).map(e => edgeKeyFromId(`${e[0]}-${e[1]}`)));
       updateStats(data.summary);
       updatePanel(data);
+      if (data.capacity_reinforcement) updateCapacityReinforcementHint(data.capacity_reinforcement);
       if (network) {
         const pos = network.getPositions();
         nodesDS.clear(); edgesDS.clear();
@@ -321,11 +474,13 @@
           min_degree: +document.getElementById("min_degree").value,
           max_degree: +document.getElementById("max_degree").value,
         });
-        drawData(data, true);
+        applyResult(data, true);
         document.getElementById("timing").textContent = `Генерация: ${Math.round(performance.now() - t0)} мс`;
         document.getElementById("weakest-btn").disabled = false;
         document.getElementById("weakest-edge-btn").disabled = false;
         document.getElementById("weakest-text").textContent = "—";
+        updateReinforcementHint(null);
+        updateCapacityReinforcementHint(null);
       } catch (e) {
         showError(e.message);
         document.getElementById("timing").textContent = "";
@@ -371,6 +526,54 @@
       finally { btn.disabled = false; }
     }
 
+    async function showReinforcementPlan() {
+      if (!graphState) { showError("Сначала сгенерируйте граф"); return; }
+      showError("");
+      reinforceBtn.disabled = true;
+      reinforceBtn.textContent = "Расчёт…";
+      const t0 = performance.now();
+      await new Promise(r => setTimeout(r, 10));
+      try {
+        const raw = GraphCore.optimizeReinforcement(
+          stateWithDisables(),
+          getReinforcementOpts(),
+          network?.getPositions()
+        );
+        const data = GraphCore.rebalanceLarge(raw.state, [], network?.getPositions(), getRenderOpts());
+        data.reinforcement = raw.reinforcement;
+        disabledSet = new Set();
+        disabledEdgesSet = new Set();
+        applyResult(data, true);
+        setSidebarMode("reinforce");
+        document.getElementById("timing").textContent = `План (бюджет): ${Math.round(performance.now() - t0)} мс`;
+      } catch (e) { showError(e.message); }
+      finally {
+        reinforceBtn.disabled = false;
+        reinforceBtn.textContent = "Рассчитать план";
+      }
+    }
+
+    async function showCapacityReinforcementPlan() {
+      if (!graphState) { showError("Сначала сгенерируйте граф"); return; }
+      const btn = document.getElementById("capacity-reinforce-btn");
+      btn.disabled = true;
+      btn.textContent = "Поиск…";
+      const t0 = performance.now();
+      await new Promise(r => setTimeout(r, 10));
+      try {
+        const data = GraphCore.optimizeCapacityReinforcement(stateWithDisables(), network?.getPositions(), getRenderOpts());
+        disabledSet = new Set();
+        disabledEdgesSet = new Set();
+        applyResult(data, false);
+        setSidebarMode("capacity");
+        document.getElementById("timing").textContent = `План (critical): ${Math.round(performance.now() - t0)} мс`;
+      } catch (e) { showError(e.message); }
+      finally {
+        btn.disabled = false;
+        btn.textContent = "Найти минимальный план";
+      }
+    }
+
     document.querySelectorAll(".preset-row button").forEach(b => {
       b.addEventListener("click", () => {
         document.querySelectorAll(".preset-row button").forEach(x => x.classList.remove("active"));
@@ -381,12 +584,19 @@
     document.getElementById("generate-btn").addEventListener("click", generate);
     document.getElementById("weakest-btn").addEventListener("click", showWeakest);
     document.getElementById("weakest-edge-btn").addEventListener("click", showWeakestEdge);
+    document.getElementById("reinforce-btn").addEventListener("click", showReinforcementPlan);
+    document.getElementById("capacity-reinforce-btn").addEventListener("click", showCapacityReinforcementPlan);
+    modeGenBtn.addEventListener("click", () => setSidebarMode("generate"));
+    modeReinforceBtn.addEventListener("click", () => setSidebarMode("reinforce"));
+    modeCapacityBtn.addEventListener("click", () => setSidebarMode("capacity"));
     document.querySelectorAll(".type-f, .status-f, #label_mode, #flow_threshold, #edge_mode, #show_zero_edges")
       .forEach(el => el.addEventListener("change", applyFilters));
     document.getElementById("toggle-panels-btn").addEventListener("click", () => {
       document.body.classList.toggle("graph-only");
       setTimeout(() => network?.redraw(), 80);
     });
+    const savedMode = localStorage.getItem("largeSidebarMode");
+    setSidebarMode(savedMode === "reinforce" || savedMode === "capacity" ? savedMode : "generate");
   </script>
 </body>
 </html>

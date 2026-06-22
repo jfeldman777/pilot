@@ -121,14 +121,16 @@
     }
     .mode-tab {
       flex: 1;
-      padding: 8px 6px;
+      padding: 8px 4px;
       border: 1px solid #ccc;
       border-radius: 6px;
       background: #f5f5f5;
       color: #444;
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 600;
       cursor: pointer;
+      line-height: 1.25;
+      min-width: 0;
     }
     .mode-tab:hover { background: #eee; }
     .mode-tab.active {
@@ -383,9 +385,13 @@
   <aside class="sidebar" id="app-sidebar">
     <h1>Граф потоков</h1>
     <p id="sidebar-desc">Параметры генерации · режим 1 из 8 (Screening · малый · схема)</p>
+    <div class="banner" style="margin:0 16px 10px;padding:8px 10px;background:#fff8e1;border:1px solid #ffe082;border-radius:6px;font-size:10px;line-height:1.4;color:#5d4037">
+      Mathematical screening mode. Capacity, links and reinforcement costs are synthetic. This is not an engineering recommendation.
+    </div>
     <div class="sidebar-mode-tabs">
       <button type="button" id="mode-gen-btn" class="mode-tab active">Генерация</button>
-      <button type="button" id="mode-reinforce-btn" class="mode-tab">План укрепления</button>
+      <button type="button" id="mode-reinforce-btn" class="mode-tab">Бюджет</button>
+      <button type="button" id="mode-capacity-btn" class="mode-tab">Critical</button>
     </div>
 
     <div id="panel-generate" class="sidebar-panel">
@@ -441,8 +447,8 @@
       </form>
     </div>
 
-    <div id="panel-reinforce" class="sidebar-panel hidden">
-      <p class="field-desc">Минимизировать ущерб от худшего одиночного отказа (вершина или ребро). Можно добавить источник, транзит или ребро.</p>
+    <div id="panel-reinforce-budget" class="sidebar-panel hidden">
+      <p class="field-desc">Лучший план укрепления при <b>фиксированном бюджете</b>: минимизировать ущерб от худшего одиночного отказа (вершина или ребро).</p>
       <div class="field">
         <label for="budget">Бюджет</label>
         <input type="number" id="budget" value="10" min="0">
@@ -462,8 +468,16 @@
         <label for="cost_edge">Ребро</label>
         <input type="number" id="cost_edge" value="1" min="1">
       </div>
-      <div class="reinforce-hint" id="reinforce-hint">Сначала сгенерируйте граф, затем нажмите «Рассчитать план»</div>
+      <div class="reinforce-hint" id="reinforce-hint">Сначала сгенерируйте граф, затем «Рассчитать план»</div>
       <button type="button" id="reinforce-btn" class="secondary" disabled>Рассчитать план</button>
+      <ul class="panel-list" id="reinforce-plan-list" style="margin-top:10px"><li class="panel-empty">—</li></ul>
+    </div>
+
+    <div id="panel-reinforce-critical" class="sidebar-panel hidden">
+      <p class="field-desc">Минимальный план усиления, покрывающий <b>critical-потребителей</b> и устраняющий нарушения capacity. Стоимость блочная: +10 MW — ребро=1, транзит=3, генератор=5.</p>
+      <div class="reinforce-hint" id="capacity-reinforce-hint">После генерации — см. feasible в строке состояния</div>
+      <button type="button" id="capacity-reinforce-btn" class="secondary" disabled>Найти минимальный план</button>
+      <ul class="panel-list" id="capacity-plan-list" style="margin-top:10px"><li class="panel-empty">—</li></ul>
     </div>
     <div class="sidebar-panel">
       <div class="error" id="error"></div>
@@ -482,7 +496,8 @@
         <div class="legend-item"><span class="dot" style="background:#2196F3"></span> Транзит</div>
         <div class="legend-item"><span class="dot dot-manual">A</span> Отключена кликом (буква цветом типа)</div>
         <div class="legend-item"><span class="dot dot-failed">A</span> Не обеспечена (мигает, буква цветом типа)</div>
-        <div class="legend-item"><span class="dash"></span> Нулевой поток</div>
+        <div class="legend-item"><span class="dot" style="background:#F44336;border:3px solid #FF9800"></span> Critical consumer</div>
+        <div class="legend-item"><span class="dot" style="background:#c62828"></span> Capacity violation</div>
       </div>
     </div>
     <div class="checks" id="checks"></div>
@@ -514,8 +529,12 @@
       <ul class="panel-list flows-list" id="flows-list"></ul>
     </div>
     <div class="panel-section">
-      <h3>План укрепления</h3>
+      <h3>План (бюджет)</h3>
       <ul class="panel-list" id="reinforce-list"><li class="panel-empty">—</li></ul>
+    </div>
+    <div class="panel-section">
+      <h3>План (critical)</h3>
+      <ul class="panel-list" id="capacity-plan-list-right"><li class="panel-empty">—</li></ul>
     </div>
   </aside>
 
@@ -531,12 +550,19 @@
     const weakestHint = document.getElementById("weakest-hint");
     const weakestEdgeHint = document.getElementById("weakest-edge-hint");
     const reinforceBtn = document.getElementById("reinforce-btn");
+    const capacityReinforceBtn = document.getElementById("capacity-reinforce-btn");
+    const capacityReinforceHint = document.getElementById("capacity-reinforce-hint");
     const reinforceHint = document.getElementById("reinforce-hint");
     const reinforceList = document.getElementById("reinforce-list");
+    const reinforcePlanList = document.getElementById("reinforce-plan-list");
+    const capacityPlanList = document.getElementById("capacity-plan-list");
+    const capacityPlanListRight = document.getElementById("capacity-plan-list-right");
     const modeGenBtn = document.getElementById("mode-gen-btn");
     const modeReinforceBtn = document.getElementById("mode-reinforce-btn");
+    const modeCapacityBtn = document.getElementById("mode-capacity-btn");
     const panelGenerate = document.getElementById("panel-generate");
-    const panelReinforce = document.getElementById("panel-reinforce");
+    const panelReinforceBudget = document.getElementById("panel-reinforce-budget");
+    const panelReinforceCritical = document.getElementById("panel-reinforce-critical");
     const sidebarDesc = document.getElementById("sidebar-desc");
     const sizeUpBtn = document.getElementById("size-up");
     const sizeDownBtn = document.getElementById("size-down");
@@ -600,11 +626,7 @@
     }
 
     function nodeLetter(n) {
-      return String(n.label || "").split("\n")[0];
-    }
-
-    function hiddenLabelFont(n) {
-      return { ...(n.font || {}), color: "rgba(0,0,0,0)" };
+      return n.letter || String(n.label || n.title || n.tooltip || "").split("\n")[0];
     }
 
     function blackNodeColor() {
@@ -658,45 +680,47 @@
         const id = nodeId(n.id);
         const roleColor = resolveRoleColor(n);
         nodeRoleColors.set(id, roleColor);
-        if (n.disabled_failed) {
-          return {
-            ...n,
-            role: n.role,
-            role_color: roleColor,
-            color: failedNodeColor(true),
-            font: hiddenLabelFont(n),
-          };
-        }
-        if (!isManuallyDisabled(n)) return { ...n, role_color: roleColor };
-        return {
+        const tooltip = n.title || n.tooltip || "";
+        const letter = nodeLetter(n);
+        const base = {
           ...n,
-          role: n.role,
-          role_color: roleColor,
-          disabled_manual: true,
+          label: "",
+          title: tooltip,
           shape: "dot",
+          font: { size: 0, color: "rgba(0,0,0,0)" },
+          role_color: roleColor,
+          letter,
+        };
+        if (n.disabled_failed) {
+          return { ...base, role: n.role, color: failedNodeColor(true) };
+        }
+        if (!isManuallyDisabled(n)) return { ...base, role: n.role };
+        return {
+          ...base,
+          role: n.role,
+          disabled_manual: true,
           borderWidth: 2,
           color: blackNodeColor(),
-          font: hiddenLabelFont(n),
         };
       });
     }
 
-    function drawRoleColoredLetters(ctx) {
+    function drawNodeLetters(ctx) {
       if (!nodesDataset || !network) return;
       const positions = network.getPositions();
       for (const n of nodesDataset.get()) {
-        if (!n.disabled_manual && !n.disabled_failed) continue;
         const pos = positions[n.id];
         if (!pos) continue;
         const letter = nodeLetter(n);
         if (!letter) continue;
-        const roleColor = nodeRoleColors.get(nodeId(n.id)) || resolveRoleColor(n);
+        const off = n.disabled_manual || n.disabled_failed;
+        const fill = off ? (n.role_color || resolveRoleColor(n)) : "#ffffff";
         const size = n.size || 38;
-        const fontSize = Math.max(18, Math.round(size * 0.82));
+        const fontSize = Math.max(13, Math.round(size * 0.48));
         ctx.font = `bold ${fontSize}px Arial, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillStyle = roleColor;
+        ctx.fillStyle = fill;
         ctx.fillText(letter, pos.x, pos.y);
       }
     }
@@ -711,7 +735,18 @@
         multiselect: false,
         selectConnectedEdges: false,
       },
-      nodes: { borderWidth: 2, borderWidthSelected: 3, chosen: { label: false }, font: { size: 16 } },
+      nodes: {
+        shape: "dot",
+        borderWidth: 2,
+        borderWidthSelected: 3,
+        chosen: {
+          node(values, id) {
+            const n = nodesDataset?.get(id);
+            if (n?.size != null) values.size = n.size;
+          },
+        },
+        font: { size: 0, color: "rgba(0,0,0,0)" },
+      },
       edges: { chosen: false, selectionWidth: 0, hoverWidth: 2 },
     };
 
@@ -727,13 +762,11 @@
       const factor = ballSizeFactor();
       return enrichNodes(rawNodes).map(n => {
         const baseSize = n.size ?? 38;
-        const baseFont = n.font?.size ?? 16;
         return {
           ...n,
           _baseSize: baseSize,
-          _baseFont: baseFont,
           size: Math.round(baseSize * factor),
-          font: { ...n.font, size: Math.round(baseFont * factor) },
+          font: { size: 0, color: "rgba(0,0,0,0)" },
         };
       });
     }
@@ -744,10 +777,6 @@
       const updates = nodesDataset.get().map(n => ({
         id: n.id,
         size: Math.round((n._baseSize ?? n.size ?? 38) * factor),
-        font: {
-          ...(n.font || {}),
-          size: Math.round((n._baseFont ?? 16) * factor),
-        },
       }));
       if (updates.length) nodesDataset.update(updates);
       updateSizeScaleLabel();
@@ -956,7 +985,7 @@
         }
         handleGraphTap(params);
       });
-      network.on("afterDrawing", drawRoleColoredLetters);
+      network.on("afterDrawing", drawNodeLetters);
     }
 
     function mergeSavedPositions(nodes, savedPositions) {
@@ -983,6 +1012,7 @@
       if (network) {
         network.unselectAll();
         network.redraw();
+        applyNodeSizeScale();
         if (shouldFit) fitGraphView();
       }
     }
@@ -1017,6 +1047,7 @@
 
       network.unselectAll();
       network.redraw();
+      applyNodeSizeScale();
       restoreGraphView(savedView);
 
       if (opts.focusNode !== undefined) {
@@ -1042,7 +1073,24 @@
       if (s.disabled_edges_count) text += ` · ребр.откл=${s.disabled_edges_count}`;
       if (s.failed_count) text += ` · не обеспечено=${s.failed_count}`;
       if (s.served_consumption != null) text += ` · обслужено=${s.served_consumption}`;
+      const f = s.feasibility;
+      if (f) {
+        text += ` · feasible=${f.feasible ? "OK" : "NO"}`;
+        if (!f.feasible) text += ` · crit↓${f.critical_unserved_count} · cap↓${f.capacity_violations_count}`;
+        else text += ` · served ${f.served_total_mw}/${f.demand_total_mw} MW`;
+      }
       return text;
+    }
+
+    function formatFeasibility(f) {
+      if (!f) return "—";
+      return [
+        `feasible: ${f.feasible}`,
+        `critical: ${f.critical_served_count}/${f.critical_total_count}`,
+        `cap violations: ${f.capacity_violations_count}`,
+        `max load: ${f.max_loading_percent}%`,
+        `served: ${f.served_total_mw} / ${f.demand_total_mw} MW`,
+      ].join(" · ");
     }
 
     function updateSurplusHint() {
@@ -1075,7 +1123,7 @@
         try {
           await new Promise((resolve, reject) => {
             const s = document.createElement("script");
-            s.src = path + "?v=4";
+            s.src = path + "?v=10";
             s.onload = resolve;
             s.onerror = reject;
             document.head.appendChild(s);
@@ -1137,26 +1185,45 @@
     }
 
     function setSidebarMode(mode) {
-      const reinforce = mode === "reinforce";
-      panelGenerate.classList.toggle("hidden", reinforce);
-      panelReinforce.classList.toggle("hidden", !reinforce);
-      modeGenBtn.classList.toggle("active", !reinforce);
-      modeReinforceBtn.classList.toggle("active", reinforce);
-      sidebarDesc.textContent = reinforce
-        ? "План укрепления при ограниченном бюджете · режим 1"
-        : "Параметры генерации · режим 1 из 8 (Screening · малый · схема)";
+      const isGen = mode === "generate";
+      const isBudget = mode === "reinforce";
+      const isCritical = mode === "capacity";
+      panelGenerate.classList.toggle("hidden", !isGen);
+      panelReinforceBudget.classList.toggle("hidden", !isBudget);
+      panelReinforceCritical.classList.toggle("hidden", !isCritical);
+      modeGenBtn.classList.toggle("active", isGen);
+      modeReinforceBtn.classList.toggle("active", isBudget);
+      modeCapacityBtn.classList.toggle("active", isCritical);
+      if (isBudget) {
+        sidebarDesc.textContent = "План укрепления при фиксированном бюджете · режим 1";
+      } else if (isCritical) {
+        sidebarDesc.textContent = "План усиления: critical + capacity · режим 1";
+      } else {
+        sidebarDesc.textContent = "Параметры генерации · режим 1 из 8 (Screening · малый · схема)";
+      }
       localStorage.setItem("sidebarMode", mode);
       showError("");
     }
 
     modeGenBtn.addEventListener("click", () => setSidebarMode("generate"));
     modeReinforceBtn.addEventListener("click", () => setSidebarMode("reinforce"));
+    modeCapacityBtn.addEventListener("click", () => setSidebarMode("capacity"));
+
+    function fillPlanList(listEl, plan, emptyText) {
+      if (!listEl) return;
+      if (!plan?.length) {
+        listEl.innerHTML = `<li class="panel-empty">${emptyText || "—"}</li>`;
+        return;
+      }
+      listEl.innerHTML = plan.map(p => `<li>${p.text}${p.cost != null ? ` <small>(cost ${p.cost})</small>` : ""}</li>`).join("");
+    }
 
     function updateReinforcementHint(r) {
       if (!r) {
         reinforceHint.textContent = "Сначала сгенерируйте граф, затем нажмите «Рассчитать план»";
         reinforceHint.className = "reinforce-hint";
         reinforceList.innerHTML = '<li class="panel-empty">—</li>';
+        if (reinforcePlanList) reinforcePlanList.innerHTML = '<li class="panel-empty">—</li>';
         return;
       }
       const lines = r.plan?.length
@@ -1165,11 +1232,24 @@
       reinforceHint.textContent =
         `Лучший план за ${r.budget} (потрачено ${r.total_cost}):\n${lines}\n\nУщерб до: ${r.damage_before} потребителей\nУщерб после: ${r.damage_after} потребителей`;
       reinforceHint.className = "reinforce-hint active";
-      if (r.plan?.length) {
-        reinforceList.innerHTML = r.plan.map(p => `<li>${p.text}</li>`).join("");
-      } else {
-        reinforceList.innerHTML = '<li class="panel-empty">Без изменений</li>';
+      fillPlanList(reinforceList, r.plan, "Без изменений");
+      fillPlanList(reinforcePlanList, r.plan, "Без изменений");
+    }
+
+    function updateCapacityReinforcementHint(r) {
+      if (!r) {
+        capacityReinforceHint.textContent = "После генерации — см. feasible в строке состояния";
+        capacityReinforceHint.className = "reinforce-hint";
+        fillPlanList(capacityPlanList, null);
+        if (capacityPlanListRight) capacityPlanListRight.innerHTML = '<li class="panel-empty">—</li>';
+        return;
       }
+      const lines = r.plan?.length ? r.plan.map(p => `• ${p.text}`).join("\n") : "• без изменений";
+      capacityReinforceHint.textContent =
+        `План усиления · стоимость ${r.total_cost}\n${lines}\n\nДо: crit↓${r.before.critical_unserved_count} cap↓${r.before.capacity_violations_count} served ${r.before.served_total_mw} MW\nПосле: crit↓${r.after.critical_unserved_count} cap↓${r.after.capacity_violations_count} served ${r.after.served_total_mw} MW`;
+      capacityReinforceHint.className = "reinforce-hint active";
+      fillPlanList(capacityPlanList, r.plan);
+      fillPlanList(capacityPlanListRight, r.plan);
     }
 
     function applyResult(data) {
@@ -1190,6 +1270,12 @@
       if (data.weakest) updateWeakestHint(data.weakest);
       if (data.weakest_edge) updateWeakestEdgeHint(data.weakest_edge);
       if (data.reinforcement) updateReinforcementHint(data.reinforcement);
+      if (data.capacity_reinforcement) {
+        updateCapacityReinforcementHint(data.capacity_reinforcement);
+      } else if (data.feasibility) {
+        capacityReinforceHint.textContent = `Допустимость: ${data.feasibility.feasible ? "OK" : "INFEASIBLE"} · ${formatFeasibility(data.feasibility)}`;
+        capacityReinforceHint.className = "reinforce-hint";
+      }
       if (network && !data.weakest && !data.weakest_edge) network.unselectAll();
       weakestBtn.disabled = false;
       weakestEdgeBtn.disabled = false;
@@ -1211,8 +1297,11 @@
         edgesDataset = new vis.DataSet(data.edges);
         network = new vis.Network(container, { nodes: nodesDataset, edges: edgesDataset }, networkOptions);
         setupNetworkEvents();
-        fitGraphView();
-        refreshNetworkLayout(true);
+        requestAnimationFrame(() => {
+          refreshNetworkLayout(true);
+          applyNodeSizeScale();
+          fitGraphView();
+        });
       }
 
       renderChecks(data.checks);
@@ -1222,6 +1311,7 @@
       weakestBtn.disabled = false;
       weakestEdgeBtn.disabled = false;
       reinforceBtn.disabled = false;
+      capacityReinforceBtn.disabled = false;
     }
 
     async function showReinforcementPlan() {
@@ -1250,6 +1340,29 @@
       } finally {
         reinforceBtn.disabled = false;
         reinforceBtn.textContent = "Рассчитать план";
+      }
+    }
+
+    async function showCapacityReinforcementPlan() {
+      if (!graphState) {
+        showError("Сначала нажмите «Сгенерировать»");
+        return;
+      }
+      showError("");
+      capacityReinforceBtn.disabled = true;
+      capacityReinforceBtn.textContent = "Поиск…";
+      try {
+        requireGraphCore();
+        const data = GraphCore.optimizeCapacityReinforcement(stateWithDisables(), getPositions());
+        disabledSet = new Set();
+        disabledEdgesSet = new Set();
+        applyResult(data);
+        setSidebarMode("capacity");
+      } catch (e) {
+        showError(e.message || "Не удалось построить план усиления");
+      } finally {
+        capacityReinforceBtn.disabled = false;
+        capacityReinforceBtn.textContent = "Найти минимальный план";
       }
     }
 
@@ -1362,8 +1475,8 @@
       const edges = data.edges || [];
       const manual = [], failed = [], flows = [];
       for (const n of nodes) {
-        const letter = String(n.label || "").split("\n")[0];
-        const entry = { letter, label: String(n.label || "").replace(/\n/g, " ") };
+        const letter = n.letter || String(n.title || n.tooltip || n.label || "").split("\n")[0];
+        const entry = { letter, label: String(n.title || n.tooltip || n.label || "").replace(/\n/g, " ") };
         if (n.disabled_manual) manual.push(entry);
         else if (n.disabled_failed) failed.push(entry);
       }
@@ -1475,12 +1588,14 @@
     weakestBtn.addEventListener("click", showWeakest);
     weakestEdgeBtn.addEventListener("click", showWeakestEdge);
     reinforceBtn.addEventListener("click", showReinforcementPlan);
+    capacityReinforceBtn.addEventListener("click", showCapacityReinforcementPlan);
     sizeUpBtn.addEventListener("click", () => changeNodeSizeScale(10));
     sizeDownBtn.addEventListener("click", () => changeNodeSizeScale(-10));
     togglePanelsBtn.addEventListener("click", toggleGraphOnlyMode);
     window.addEventListener("resize", () => refreshNetworkLayout(true));
     setGraphOnlyMode(localStorage.getItem("graphOnly") === "1");
-    setSidebarMode(localStorage.getItem("sidebarMode") === "reinforce" ? "reinforce" : "generate");
+    const savedMode = localStorage.getItem("sidebarMode");
+    setSidebarMode(savedMode === "reinforce" || savedMode === "capacity" ? savedMode : "generate");
     updateSizeScaleLabel();
     updateSurplusHint();
 
