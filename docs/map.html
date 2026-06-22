@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Потоки на карте СЕС — Украина</title>
+  <link rel="stylesheet" href="home-nav.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
@@ -117,11 +118,11 @@
   </style>
 </head>
 <body>
+  <a href="home.html" class="home-btn" title="Домой">⌂</a>
   <aside class="sidebar" id="app-sidebar">
     <h1>Потоки на карте СЕС</h1>
-    <p id="sidebar-desc">Координаты СЕС с <a href="https://vde-map.vercel.app/" target="_blank" rel="noopener">карты ВДЕ</a>. ⅓ — источники, ⅓ — стоки, ⅓ — транзит.</p>
-    <a href="index.html" style="padding: 0 16px 4px; display: inline-block;">← Абстрактный граф</a>
-    <a href="large-map.html" style="padding: 0 16px 10px; display: inline-block;">Large geo screening →</a>
+    <p id="sidebar-desc">Режим 2 из 8 · Screening · малый · карта. Координаты с <a href="https://vde-map.vercel.app/" target="_blank" rel="noopener">карты ВДЕ</a>.</p>
+    <a href="small.html" style="padding: 0 16px 10px; display: inline-block;">← Малый граф</a>
     <div class="sidebar-mode-tabs">
       <button type="button" id="mode-gen-btn" class="mode-tab active">Карта</button>
       <button type="button" id="mode-reinforce-btn" class="mode-tab">План укрепления</button>

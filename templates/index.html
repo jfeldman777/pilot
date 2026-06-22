@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Граф потоков</title>
+  <link rel="stylesheet" href="home-nav.css">
   <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -378,9 +379,10 @@
   </style>
 </head>
 <body>
+  <a href="home.html" class="home-btn" title="Домой">⌂</a>
   <aside class="sidebar" id="app-sidebar">
     <h1>Граф потоков</h1>
-    <p id="sidebar-desc">Параметры генерации · <a href="map.html" style="color:#1976D2">Демо: карта СЕС →</a></p>
+    <p id="sidebar-desc">Параметры генерации · режим 1 из 8 (Screening · малый · схема)</p>
     <div class="sidebar-mode-tabs">
       <button type="button" id="mode-gen-btn" class="mode-tab active">Генерация</button>
       <button type="button" id="mode-reinforce-btn" class="mode-tab">План укрепления</button>
@@ -1140,9 +1142,9 @@
       panelReinforce.classList.toggle("hidden", !reinforce);
       modeGenBtn.classList.toggle("active", !reinforce);
       modeReinforceBtn.classList.toggle("active", reinforce);
-      sidebarDesc.innerHTML = reinforce
-        ? "План укрепления при ограниченном бюджете · <a href=\"map.html\" style=\"color:#1976D2\">Карта СЕС →</a>"
-        : "Параметры генерации · <a href=\"map.html\" style=\"color:#1976D2\">Демо: карта СЕС →</a>";
+      sidebarDesc.textContent = reinforce
+        ? "План укрепления при ограниченном бюджете · режим 1"
+        : "Параметры генерации · режим 1 из 8 (Screening · малый · схема)";
       localStorage.setItem("sidebarMode", mode);
       showError("");
     }

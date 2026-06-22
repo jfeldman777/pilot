@@ -12,8 +12,23 @@ app = Flask(__name__)
 
 
 @app.get("/")
-def index():
+def home():
+    return send_from_directory(ROOT, "home.html")
+
+
+@app.get("/index.html")
+def index_page():
     return send_from_directory(ROOT, "index.html")
+
+
+@app.get("/small.html")
+def small_page():
+    return send_from_directory(ROOT, "index.html")
+
+
+@app.get("/home.html")
+def home_html():
+    return send_from_directory(ROOT, "home.html")
 
 
 @app.get("/graph_core.js")
