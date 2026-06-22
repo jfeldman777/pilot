@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Large screening — схема</title>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "Segoe UI", Arial, sans-serif; height: 100vh; display: flex; background: #f0f2f5; color: #222; overflow: hidden; }
+    .sidebar { width: 320px; min-width: 320px; background: #fff; border-right: 1px solid #ddd; overflow-y: auto; z-index: 10; }
+    .sidebar h1 { font-size: 17px; padding: 14px 16px 6px; }
+    .sidebar p, .sidebar a { font-size: 12px; color: #666; padding: 0 16px 8px; display: block; line-height: 1.4; }
+  .banner { margin: 0 16px 10px; padding: 8px 10px; background: #fff8e1; border: 1px solid #ffe082; border-radius: 6px; font-size: 11px; line-height: 1.4; color: #5d4037; }
+    .panel { padding: 0 16px 16px; }
+    .field { margin-bottom: 10px; }
+    .field label { display: block; font-size: 11px; font-weight: 600; margin-bottom: 3px; color: #444; }
+    .field input, .field select { width: 100%; padding: 7px 9px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .preset-row { display: flex; gap: 6px; margin-bottom: 10px; }
+    .preset-row button { flex: 1; padding: 7px; border: 1px solid #2196F3; background: #fff; color: #1976D2; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .preset-row button.active { background: #2196F3; color: #fff; }
+    .filter-group { margin: 10px 0; padding: 8px; background: #f7f7f7; border-radius: 6px; }
+    .filter-group h3 { font-size: 11px; margin-bottom: 6px; color: #555; }
+    .filter-group label { font-size: 11px; display: block; margin: 3px 0; cursor: pointer; }
+    button.primary { width: 100%; padding: 10px; background: #2196F3; color: #fff; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; }
+    button.primary:disabled { background: #aaa; }
+    button.secondary { width: 100%; margin-top: 8px; padding: 9px; background: #fff; color: #2196F3; border: 1px solid #2196F3; border-radius: 6px; font-weight: 600; cursor: pointer; }
+    button.secondary:disabled { opacity: 0.5; cursor: wait; }
+    .error { margin: 8px 0; padding: 8px; background: #ffebee; color: #c62828; border-radius: 6px; font-size: 12px; display: none; }
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .toolbar { padding: 10px 14px; background: #fff; border-bottom: 1px solid #ddd; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    .stats { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; }
+    .stat { background: #f5f5f5; padding: 4px 8px; border-radius: 4px; }
+    .stat b { color: #1976D2; }
+    .graph-wrap { flex: 1; position: relative; min-height: 0; }
+    #graph { width: 100%; height: 100%; background: #fafafa; }
+    .hint { position: absolute; bottom: 8px; left: 8px; font-size: 11px; color: #666; background: rgba(255,255,255,0.9); padding: 6px 8px; border-radius: 4px; pointer-events: none; }
+    .info-panel { width: 260px; min-width: 260px; background: #fff; border-left: 1px solid #ddd; overflow-y: auto; padding: 12px 14px; font-size: 12px; }
+    .info-panel h2 { font-size: 14px; margin-bottom: 10px; }
+    .info-panel h3 { font-size: 11px; color: #555; margin: 10px 0 4px; }
+    .info-panel ul { list-style: none; max-height: 120px; overflow-y: auto; }
+    .info-panel li { padding: 3px 0; border-bottom: 1px solid #eee; }
+    body.graph-only .sidebar, body.graph-only .info-panel, body.graph-only .toolbar .stats { display: none !important; }
+    .panel-toggle { position: absolute; top: 10px; right: 10px; z-index: 5; padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; background: rgba(255,255,255,0.95); cursor: pointer; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <aside class="sidebar">
+    <h1>Large screening — схема</h1>
+    <a href="index.html">← Малый граф (≤26)</a>
+    <a href="large-map.html">Large geo screening →</a>
+    <div class="banner">Математическая модель, synthetic links/capacity.<br>Не является инженерной оценкой режима энергосистемы.</div>
+    <div class="panel">
+      <div class="preset-row">
+        <button type="button" data-n="100" class="active">100</button>
+        <button type="button" data-n="300">300</button>
+        <button type="button" data-n="1000">1000</button>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Узлов</label><input type="number" id="n_vertices" value="100" min="10" max="2000"></div>
+        <div class="field"><label>Seed</label><input type="number" id="seed" value="42"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Степень min</label><input type="number" id="min_degree" value="2" min="1"></div>
+        <div class="field"><label>Степень max</label><input type="number" id="max_degree" value="6" min="1"></div>
+      </div>
+      <div class="filter-group">
+        <h3>Отображение</h3>
+        <div class="field">
+          <label for="label_mode">Подписи узлов</label>
+          <select id="label_mode">
+            <option value="none">Без подписей</option>
+            <option value="selected" selected>Только выбранный / проблемный</option>
+            <option value="all">Все (медленно)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="flow_threshold">Порог потока на рёбрах</label>
+          <input type="number" id="flow_threshold" value="0" min="0">
+        </div>
+        <div class="field">
+          <label for="edge_mode">Рёбра</label>
+          <select id="edge_mode">
+            <option value="all">Все</option>
+            <option value="active" selected>Только с потоком</option>
+            <option value="hidden">Скрыты</option>
+          </select>
+        </div>
+        <label><input type="checkbox" id="show_zero_edges"> Нулевые рёбра</label>
+      </div>
+      <div class="filter-group">
+        <h3>Тип узла</h3>
+        <label><input type="checkbox" class="type-f" data-type="generator" checked> Генератор</label>
+        <label><input type="checkbox" class="type-f" data-type="consumer" checked> Потребитель</label>
+        <label><input type="checkbox" class="type-f" data-type="transit" checked> Транзит</label>
+      </div>
+      <div class="filter-group">
+        <h3>Статус</h3>
+        <label><input type="checkbox" class="status-f" data-status="active" checked> Активен</label>
+        <label><input type="checkbox" class="status-f" data-status="disabled" checked> Отключён</label>
+        <label><input type="checkbox" class="status-f" data-status="failed" checked> Не обеспечен</label>
+      </div>
+      <div class="error" id="error"></div>
+      <button type="button" id="generate-btn" class="primary">Сгенерировать</button>
+      <button type="button" id="weakest-btn" class="secondary" disabled>Слабая вершина</button>
+      <button type="button" id="weakest-edge-btn" class="secondary" disabled>Слабое ребро</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="toolbar">
+      <div class="stats" id="stats-bar">
+        <span class="stat">Узлов: <b id="st-v">—</b></span>
+        <span class="stat">Рёбер: <b id="st-e">—</b></span>
+        <span class="stat">Gen: <b id="st-g">—</b></span>
+        <span class="stat">Cons: <b id="st-c">—</b></span>
+        <span class="stat">Tr: <b id="st-t">—</b></span>
+        <span class="stat">Обслужено: <b id="st-served">—</b></span>
+        <span class="stat">Не обесп.: <b id="st-failed">—</b></span>
+      </div>
+      <span id="timing" style="font-size:11px;color:#888"></span>
+    </div>
+    <div class="graph-wrap">
+      <button type="button" id="toggle-panels-btn" class="panel-toggle">⛶ Граф</button>
+      <div id="graph"></div>
+      <div class="hint">Клик — откл/вкл узел · рёбра — клик по линии · колёсико — масштаб</div>
+    </div>
+  </main>
+
+  <aside class="info-panel">
+    <h2>Состояние</h2>
+    <h3>Отключены <span id="manual-count">0</span></h3>
+    <ul id="manual-list"><li>—</li></ul>
+    <h3>Не обеспечены <span id="failed-count">0</span></h3>
+    <ul id="failed-list"><li>—</li></ul>
+    <h3 id="weakest-hint">Слабость</h3>
+    <p id="weakest-text" style="font-size:11px;color:#666">—</p>
+  </aside>
+
+  <script src="graph_core.js?v=5"></script>
+  <script>
+    const container = document.getElementById("graph");
+    const errorEl = document.getElementById("error");
+    let network = null, nodesDS = null, edgesDS = null;
+    let graphState = null, disabledSet = new Set(), disabledEdgesSet = new Set();
+    let highlightNodes = [], rebalancing = false, lastToggle = 0;
+
+    const networkOpts = {
+      physics: { enabled: false },
+      interaction: { dragNodes: true, dragView: true, zoomView: true, hover: true, selectConnectedEdges: false },
+      nodes: { shape: "dot", chosen: false },
+      edges: { chosen: false, selectionWidth: 0, smooth: false },
+    };
+
+    function showError(m) { errorEl.textContent = m; errorEl.style.display = m ? "block" : "none"; }
+    function nodeId(r) { return typeof r === "string" ? parseInt(r, 10) : r; }
+    function edgeKeyFromId(id) { const [u,v]=String(id).split("-").map(Number); return `${Math.min(u,v)},${Math.max(u,v)}`; }
+
+    function getRenderOpts() {
+      const typeFilter = { generator: true, consumer: true, transit: true };
+      document.querySelectorAll(".type-f").forEach(cb => { typeFilter[cb.dataset.type] = cb.checked; });
+      const statusFilter = { active: true, disabled: true, failed: true };
+      document.querySelectorAll(".status-f").forEach(cb => { statusFilter[cb.dataset.status] = cb.checked; });
+      return {
+        labelMode: document.getElementById("label_mode").value,
+        flowThreshold: +document.getElementById("flow_threshold").value || 0,
+        showZeroEdges: document.getElementById("show_zero_edges").checked,
+        edgeMode: document.getElementById("edge_mode").value,
+        typeFilter,
+        statusFilter,
+        highlightNodes,
+      };
+    }
+
+    function stateWithDisables() {
+      const edges = [...disabledEdgesSet].map(k => k.split(",").map(Number));
+      return { ...graphState, disabled_edges: edges };
+    }
+
+    function updateStats(s) {
+      if (!s) return;
+      document.getElementById("st-v").textContent = s.vertices;
+      document.getElementById("st-e").textContent = s.edges_count;
+      document.getElementById("st-g").textContent = s.generators ?? "—";
+      document.getElementById("st-c").textContent = s.consumers ?? "—";
+      document.getElementById("st-t").textContent = s.transit ?? "—";
+      document.getElementById("st-served").textContent = s.served_consumption ?? "—";
+      document.getElementById("st-failed").textContent = s.failed_count ?? "—";
+    }
+
+    function updatePanel(data) {
+      const manual = [], failed = [];
+      for (const n of data.nodes || []) {
+        const letter = n.label || String(n.id);
+        if (n.disabled_manual) manual.push(letter);
+        else if (n.disabled_failed) failed.push(letter);
+      }
+      document.getElementById("manual-count").textContent = manual.length;
+      document.getElementById("failed-count").textContent = failed.length;
+      document.getElementById("manual-list").innerHTML = manual.slice(0, 40).map(x => `<li>${x}</li>`).join("") || "<li>—</li>";
+      document.getElementById("failed-list").innerHTML = failed.slice(0, 40).map(x => `<li>${x}</li>`).join("") || "<li>—</li>";
+      if (manual.length > 40) document.getElementById("manual-list").innerHTML += `<li>…ещё ${manual.length - 40}</li>`;
+      if (failed.length > 40) document.getElementById("failed-list").innerHTML += `<li>…ещё ${failed.length - 40}</li>`;
+    }
+
+    function drawData(data, fit) {
+      graphState = data.state;
+      disabledSet = new Set((data.disabled || []).map(nodeId));
+      disabledEdgesSet = new Set((data.disabled_edges || []).map(e => edgeKeyFromId(`${e[0]}-${e[1]}`)));
+      updateStats(data.summary);
+      updatePanel(data);
+      if (network) {
+        const pos = network.getPositions();
+        nodesDS.clear(); edgesDS.clear();
+        nodesDS.add(data.nodes);
+        edgesDS.add(data.edges);
+        network.setOptions({ interaction: { hover: data.nodes.length < 500 } });
+        if (fit) network.fit({ animation: { duration: 300 } });
+        else {
+          for (const n of data.nodes) {
+            const p = pos[n.id];
+            if (p) nodesDS.update({ id: n.id, x: p.x, y: p.y });
+          }
+        }
+      } else {
+        nodesDS = new vis.DataSet(data.nodes);
+        edgesDS = new vis.DataSet(data.edges);
+        network = new vis.Network(container, { nodes: nodesDS, edges: edgesDS }, networkOpts);
+        setupEvents();
+        network.fit({ animation: false });
+      }
+    }
+
+    function setupEvents() {
+      network.on("click", p => {
+        if (rebalancing) return;
+        if (Date.now() - lastToggle < 300) return;
+        if (p.edges && p.edges.length) {
+          lastToggle = Date.now();
+          const k = edgeKeyFromId(p.edges[0]);
+          if (disabledEdgesSet.has(k)) disabledEdgesSet.delete(k); else disabledEdgesSet.add(k);
+          rebalance();
+          return;
+        }
+        if (p.nodes && p.nodes.length) {
+          lastToggle = Date.now();
+          const id = nodeId(p.nodes[0]);
+          highlightNodes = [id];
+          if (disabledSet.has(id)) disabledSet.delete(id); else disabledSet.add(id);
+          rebalance();
+        }
+      });
+    }
+
+    function rebalance() {
+      if (!graphState || rebalancing) return;
+      rebalancing = true;
+      requestAnimationFrame(() => {
+        try {
+          const data = GraphCore.rebalanceLarge(stateWithDisables(), [...disabledSet], network?.getPositions(), getRenderOpts());
+          drawData(data, false);
+        } catch (e) { showError(e.message); }
+        finally { rebalancing = false; }
+      });
+    }
+
+    function applyFilters() {
+      if (!graphState) return;
+      rebalance();
+    }
+
+    async function generate() {
+      showError("");
+      const btn = document.getElementById("generate-btn");
+      btn.disabled = true;
+      const t0 = performance.now();
+      document.getElementById("timing").textContent = "Генерация…";
+      highlightNodes = [];
+      disabledSet = new Set();
+      disabledEdgesSet = new Set();
+      await new Promise(r => setTimeout(r, 10));
+      try {
+        if (network) { network.destroy(); network = null; }
+        const data = GraphCore.generateLarge({
+          n_vertices: +document.getElementById("n_vertices").value,
+          seed: +document.getElementById("seed").value,
+          min_degree: +document.getElementById("min_degree").value,
+          max_degree: +document.getElementById("max_degree").value,
+        });
+        drawData(data, true);
+        document.getElementById("timing").textContent = `Генерация: ${Math.round(performance.now() - t0)} мс`;
+        document.getElementById("weakest-btn").disabled = false;
+        document.getElementById("weakest-edge-btn").disabled = false;
+        document.getElementById("weakest-text").textContent = "—";
+      } catch (e) {
+        showError(e.message);
+        document.getElementById("timing").textContent = "";
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function showWeakest() {
+      if (!graphState) return;
+      const btn = document.getElementById("weakest-btn");
+      btn.disabled = true;
+      const t0 = performance.now();
+      await new Promise(r => setTimeout(r, 10));
+      try {
+        const data = GraphCore.showWeakestLarge(stateWithDisables(), [...disabledSet], network?.getPositions(), getRenderOpts());
+        highlightNodes = [data.weakest.vertex];
+        drawData(data, false);
+        const partial = data.weakest.partial ? ` (выборка 1/${data.weakest.sample_step})` : "";
+        document.getElementById("weakest-text").textContent =
+          `Вершина ${data.weakest.letter} → ${data.weakest.failed_count} потребителей${partial}`;
+        network.focus(data.weakest.vertex, { scale: 1.5, animation: true });
+        document.getElementById("timing").textContent = `Слабая вершина: ${Math.round(performance.now() - t0)} мс`;
+      } catch (e) { showError(e.message); }
+      finally { btn.disabled = false; }
+    }
+
+    async function showWeakestEdge() {
+      if (!graphState) return;
+      const btn = document.getElementById("weakest-edge-btn");
+      btn.disabled = true;
+      const t0 = performance.now();
+      await new Promise(r => setTimeout(r, 10));
+      try {
+        const data = GraphCore.showWeakestEdgeLarge(stateWithDisables(), [...disabledSet], network?.getPositions(), getRenderOpts());
+        highlightNodes = [data.weakest_edge.u, data.weakest_edge.v];
+        drawData(data, false);
+        const partial = data.weakest_edge.partial ? ` (выборка 1/${data.weakest_edge.sample_step})` : "";
+        document.getElementById("weakest-text").textContent =
+          `Ребро ${data.weakest_edge.label} → ${data.weakest_edge.failed_count} потребителей${partial}`;
+        document.getElementById("timing").textContent = `Слабое ребро: ${Math.round(performance.now() - t0)} мс`;
+      } catch (e) { showError(e.message); }
+      finally { btn.disabled = false; }
+    }
+
+    document.querySelectorAll(".preset-row button").forEach(b => {
+      b.addEventListener("click", () => {
+        document.querySelectorAll(".preset-row button").forEach(x => x.classList.remove("active"));
+        b.classList.add("active");
+        document.getElementById("n_vertices").value = b.dataset.n;
+      });
+    });
+    document.getElementById("generate-btn").addEventListener("click", generate);
+    document.getElementById("weakest-btn").addEventListener("click", showWeakest);
+    document.getElementById("weakest-edge-btn").addEventListener("click", showWeakestEdge);
+    document.querySelectorAll(".type-f, .status-f, #label_mode, #flow_threshold, #edge_mode, #show_zero_edges")
+      .forEach(el => el.addEventListener("change", applyFilters));
+    document.getElementById("toggle-panels-btn").addEventListener("click", () => {
+      document.body.classList.toggle("graph-only");
+      setTimeout(() => network?.redraw(), 80);
+    });
+  </script>
+</body>
+</html>

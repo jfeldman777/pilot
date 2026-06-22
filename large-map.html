@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Large geo screening — карта</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body { font-family: "Segoe UI", Arial, sans-serif; height: 100vh; display: flex; background: #f0f2f5; overflow: hidden; }
+    .sidebar { width: 310px; min-width: 310px; background: #fff; border-right: 1px solid #ddd; overflow-y: auto; z-index: 1000; }
+    .sidebar h1 { font-size: 16px; padding: 12px 14px 4px; }
+    .sidebar a { font-size: 12px; color: #1976D2; padding: 0 14px 8px; display: block; }
+    .banner { margin: 0 14px 8px; padding: 8px; background: #fff8e1; border: 1px solid #ffe082; border-radius: 6px; font-size: 11px; line-height: 1.4; color: #5d4037; }
+    .passport { margin: 0 14px 10px; padding: 8px; background: #e3f2fd; border: 1px solid #90caf9; border-radius: 6px; font-size: 10px; line-height: 1.5; font-family: monospace; }
+    .panel { padding: 0 14px 14px; }
+    .field { margin-bottom: 10px; }
+    .field label { display: block; font-size: 11px; font-weight: 600; margin-bottom: 3px; }
+    .field input, .field select { width: 100%; padding: 7px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+    .preset-row { display: flex; gap: 5px; margin-bottom: 10px; }
+    .preset-row button { flex: 1; padding: 7px; border: 1px solid #2196F3; background: #fff; color: #1976D2; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; }
+    .preset-row button.active { background: #2196F3; color: #fff; }
+    .filter-group { margin: 8px 0; padding: 8px; background: #f7f7f7; border-radius: 6px; font-size: 11px; }
+    .filter-group label { display: block; margin: 3px 0; cursor: pointer; }
+    button.primary { width: 100%; padding: 10px; background: #2196F3; color: #fff; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; }
+    button.secondary { width: 100%; margin-top: 8px; padding: 9px; background: #fff; color: #2196F3; border: 1px solid #2196F3; border-radius: 6px; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    .error { margin: 8px 0; padding: 8px; background: #ffebee; color: #c62828; border-radius: 6px; font-size: 12px; display: none; }
+    .main { flex: 1; position: relative; min-width: 0; }
+    #map { position: absolute; inset: 0; }
+    .stats-bar { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1000; background: rgba(255,255,255,0.95); padding: 6px 12px; border-radius: 8px; font-size: 11px; display: flex; flex-wrap: wrap; gap: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); pointer-events: none; }
+    .stats-bar b { color: #1976D2; }
+    .info-panel { width: 250px; min-width: 250px; background: #fff; border-left: 1px solid #ddd; overflow-y: auto; padding: 12px; font-size: 12px; z-index: 1000; }
+    .info-panel h2 { font-size: 14px; margin-bottom: 8px; }
+    .info-panel h3 { font-size: 11px; color: #555; margin: 8px 0 4px; }
+    .info-panel ul { list-style: none; max-height: 100px; overflow-y: auto; }
+    .node-marker { width: 10px; height: 10px; border-radius: 50%; border: 1px solid #222; }
+    .node-marker.synth { border-style: dashed; }
+    .node-marker.manual { background: #000 !important; }
+    body.graph-only .sidebar, body.graph-only .info-panel { display: none !important; }
+    .panel-toggle { position: absolute; top: 10px; right: 10px; z-index: 1000; padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; background: rgba(255,255,255,0.95); cursor: pointer; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <aside class="sidebar">
+    <h1>Large geo screening</h1>
+    <a href="map.html">← Малая карта (≤26)</a>
+    <a href="large.html">Large схема →</a>
+    <div class="banner">Математическая модель, synthetic links/capacity.<br>Не является инженерной оценкой режима энергосистемы.</div>
+    <div class="passport" id="passport">
+      Координаты: —<br>
+      Связи: SYNTHETIC<br>
+      Мощности: SYNTHETIC<br>
+      Расчёт: MATHEMATICAL SCREENING
+    </div>
+    <div class="panel">
+      <div class="preset-row">
+        <button type="button" data-n="100" class="active">100</button>
+        <button type="button" data-n="300">300</button>
+        <button type="button" data-n="1000">1000</button>
+      </div>
+      <div class="field"><label>Станций</label><input type="number" id="n_stations" value="100" min="30" max="2000"></div>
+      <div class="field"><label>Seed</label><input type="number" id="seed" value="42"></div>
+      <div class="filter-group">
+        <label>Рёбра на карте</label>
+        <select id="edge_mode">
+          <option value="hidden">Скрыты (дальний масштаб)</option>
+          <option value="active" selected>Важные (с потоком)</option>
+          <option value="all">Все (при zoom≥9)</option>
+        </select>
+        <label style="margin-top:6px">Порог потока <input type="number" id="flow_threshold" value="1" min="0" style="width:60px"></label>
+      </div>
+      <div class="filter-group">
+        <label><input type="checkbox" class="type-f" data-type="generator" checked> Источник</label>
+        <label><input type="checkbox" class="type-f" data-type="consumer" checked> Сток</label>
+        <label><input type="checkbox" class="type-f" data-type="transit" checked> Транзит</label>
+      </div>
+      <div class="filter-group">
+        <label><input type="checkbox" class="status-f" data-status="active" checked> Активен</label>
+        <label><input type="checkbox" class="status-f" data-status="disabled" checked> Отключён</label>
+        <label><input type="checkbox" class="status-f" data-status="failed" checked> Не обеспечен</label>
+      </div>
+      <div class="error" id="error"></div>
+      <button type="button" id="generate-btn" class="primary" disabled>Построить</button>
+      <button type="button" id="weakest-btn" class="secondary" disabled>Слабая вершина</button>
+      <button type="button" id="weakest-edge-btn" class="secondary" disabled>Слабое ребро</button>
+      <p id="pool-hint" style="font-size:10px;color:#888;margin-top:8px">Загрузка реестра…</p>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div id="map"></div>
+    <div class="stats-bar" id="stats-bar">
+      <span>Узлов: <b id="st-v">—</b></span>
+      <span>Рёбер: <b id="st-e">—</b></span>
+      <span>Gen: <b id="st-g">—</b></span>
+      <span>Cons: <b id="st-c">—</b></span>
+      <span>Не обесп.: <b id="st-failed">—</b></span>
+      <span id="timing"></span>
+    </div>
+    <button type="button" id="toggle-panels-btn" class="panel-toggle">⛶ Граф</button>
+  </main>
+
+  <aside class="info-panel">
+    <h2>Состояние</h2>
+    <h3>Отключены <span id="manual-count">0</span></h3>
+    <ul id="manual-list"><li>—</li></ul>
+    <h3>Не обеспечены <span id="failed-count">0</span></h3>
+    <ul id="failed-list"><li>—</li></ul>
+    <h3>Анализ</h3>
+    <p id="weakest-text" style="font-size:11px;color:#666">—</p>
+  </aside>
+
+  <script src="graph_core.js?v=5"></script>
+  <script>
+    const ROLE_COLORS = { generator: "#4CAF50", consumer: "#F44336", transit: "#2196F3" };
+    let map = null, clusterGroup = null, edgesLayer = null;
+    let graphState = null, disabledSet = new Set(), disabledEdgesSet = new Set();
+    let solarPool = [], lastData = null, rebalancing = false;
+    let markerById = new Map(), highlightNodes = [];
+
+    function showError(m) { const e = document.getElementById("error"); e.textContent = m; e.style.display = m ? "block" : "none"; }
+    function nodeId(r) { return typeof r === "string" ? parseInt(r, 10) : r; }
+    function edgeKeyFromId(id) { const [u,v]=String(id).split("-").map(Number); return `${Math.min(u,v)},${Math.max(u,v)}`; }
+
+    function getRenderOpts() {
+      const zm = map ? map.getZoom() : 6;
+      let edgeMode = document.getElementById("edge_mode").value;
+      if (edgeMode === "all" && zm < 9) edgeMode = "active";
+      const typeFilter = { generator: true, consumer: true, transit: true };
+      document.querySelectorAll(".type-f").forEach(cb => { typeFilter[cb.dataset.type] = cb.checked; });
+      const statusFilter = { active: true, disabled: true, failed: true };
+      document.querySelectorAll(".status-f").forEach(cb => { statusFilter[cb.dataset.status] = cb.checked; });
+      return {
+        labelMode: "selected",
+        flowThreshold: +document.getElementById("flow_threshold").value || 0,
+        edgeMode,
+        typeFilter,
+        statusFilter,
+        highlightNodes,
+        showZeroEdges: false,
+      };
+    }
+
+    function stateWithDisables() {
+      const edges = [...disabledEdgesSet].map(k => k.split(",").map(Number));
+      return { ...graphState, disabled_edges: edges };
+    }
+
+    function updatePassport(p) {
+      if (!p) return;
+      document.getElementById("passport").innerHTML =
+        `Координаты: ${p.coords}<br>Связи: ${p.links}<br>Мощности: ${p.capacity}<br>Расчёт: ${p.model}`;
+    }
+
+    function updateStats(s) {
+      if (!s) return;
+      document.getElementById("st-v").textContent = s.vertices;
+      document.getElementById("st-e").textContent = s.edges_count;
+      document.getElementById("st-g").textContent = s.generators ?? "—";
+      document.getElementById("st-c").textContent = s.consumers ?? "—";
+      document.getElementById("st-failed").textContent = s.failed_count ?? "—";
+    }
+
+    function makeIcon(node) {
+      const off = node.disabled_manual;
+      const fail = node.disabled_failed;
+      const col = off ? "#000" : fail ? "#bdbdbd" : ROLE_COLORS[node.role] || "#888";
+      const synth = node.synthetic ? " synth" : "";
+      const manual = off ? " manual" : "";
+      return L.divIcon({
+        className: "",
+        html: `<div class="node-marker${synth}${manual}" style="background:${col}"></div>`,
+        iconSize: [10, 10],
+        iconAnchor: [5, 5],
+      });
+    }
+
+    function drawGraph(data, fit) {
+      lastData = data;
+      graphState = data.state;
+      disabledSet = new Set((data.disabled || []).map(nodeId));
+      disabledEdgesSet = new Set((data.disabled_edges || []).map(e => edgeKeyFromId(`${e[0]}-${e[1]}`)));
+      updateStats(data.summary);
+      updatePassport(data.state.passport || graphState?.passport);
+      const manual = [], failed = [];
+      for (const n of data.nodes) {
+        if (n.disabled_manual) manual.push(n.id);
+        else if (n.disabled_failed) failed.push(n.id);
+      }
+      document.getElementById("manual-count").textContent = manual.length;
+      document.getElementById("failed-count").textContent = failed.length;
+      document.getElementById("manual-list").innerHTML = manual.slice(0, 30).map(x => `<li>#${x}</li>`).join("") || "<li>—</li>";
+      document.getElementById("failed-list").innerHTML = failed.slice(0, 30).map(x => `<li>#${x}</li>`).join("") || "<li>—</li>";
+
+      clusterGroup.clearLayers();
+      edgesLayer.clearLayers();
+      markerById.clear();
+      const nodeMap = new Map(data.nodes.map(n => [nodeId(n.id), n]));
+
+      for (const e of data.edges) {
+        const from = nodeMap.get(nodeId(e.from));
+        const to = nodeMap.get(nodeId(e.to));
+        if (!from || !to) continue;
+        const edgeOff = e.disabled_manual_edge;
+        const line = L.polyline([[from.lat, from.lng], [to.lat, to.lng]], {
+          color: edgeOff ? "#e65100" : "#555",
+          weight: edgeOff ? 2 : 1,
+          opacity: 0.5,
+          dashArray: edgeOff ? "6 6" : null,
+        });
+        edgesLayer.addLayer(line);
+      }
+
+      for (const node of data.nodes) {
+        const id = nodeId(node.id);
+        const m = L.marker([node.lat, node.lng], { icon: makeIcon(node) });
+        const tip = node.station_name ? `${node.station_name} (#${id})` : `#${id} ${node.role}`;
+        m.bindTooltip(tip, { direction: "top" });
+        if (node.synthetic) m.bindPopup(`<b>SYNTHETIC_DERIVED</b><br>${tip}`);
+        m.on("click", () => {
+          if (rebalancing) return;
+          highlightNodes = [id];
+          if (disabledSet.has(id)) disabledSet.delete(id); else disabledSet.add(id);
+          rebalance();
+        });
+        clusterGroup.addLayer(m);
+        markerById.set(id, m);
+      }
+
+      if (fit && data.nodes.length) {
+        const b = L.latLngBounds(data.nodes.map(n => [n.lat, n.lng]));
+        map.fitBounds(b.pad(0.12));
+      }
+    }
+
+    function rebalance() {
+      if (!graphState || rebalancing) return;
+      rebalancing = true;
+      requestAnimationFrame(() => {
+        try {
+          const data = GraphCore.rebalanceLarge(stateWithDisables(), [...disabledSet], null, getRenderOpts());
+          drawGraph(data, false);
+        } catch (e) { showError(e.message); }
+        finally { rebalancing = false; }
+      });
+    }
+
+    function initMap() {
+      if (map) return;
+      map = L.map("map").setView([48.5, 31.2], 6);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18 }).addTo(map);
+      clusterGroup = L.markerClusterGroup({ maxClusterRadius: 50, disableClusteringAtZoom: 12 });
+      map.addLayer(clusterGroup);
+      edgesLayer = L.layerGroup().addTo(map);
+      map.on("zoomend", () => { if (graphState) rebalance(); });
+      setTimeout(() => map.invalidateSize(), 100);
+    }
+
+    async function loadPool() {
+      try {
+        const stations = await new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "https://vde-map.vercel.app/all_stations.js";
+          s.onload = () => resolve((window.ALL_STATIONS || []).filter(x => x.type === "solar"));
+          s.onerror = reject;
+          document.head.appendChild(s);
+        });
+        solarPool = stations;
+      } catch (_) {
+        const r = await fetch("data/solar_sample.json");
+        solarPool = await r.json();
+      }
+      document.getElementById("pool-hint").textContent = `Пул: ${solarPool.length} СЕС`;
+      document.getElementById("generate-btn").disabled = false;
+    }
+
+    async function generate() {
+      showError("");
+      const btn = document.getElementById("generate-btn");
+      btn.disabled = true;
+      const t0 = performance.now();
+      highlightNodes = [];
+      disabledSet = new Set();
+      disabledEdgesSet = new Set();
+      await new Promise(r => setTimeout(r, 10));
+      try {
+        initMap();
+        const data = GraphCore.generateLargeGeo(solarPool, {
+          count: +document.getElementById("n_stations").value,
+          seed: +document.getElementById("seed").value,
+        });
+        drawGraph(data, true);
+        document.getElementById("timing").textContent = `${Math.round(performance.now() - t0)} мс`;
+        document.getElementById("weakest-btn").disabled = false;
+        document.getElementById("weakest-edge-btn").disabled = false;
+      } catch (e) { showError(e.message); }
+      finally { btn.disabled = false; }
+    }
+
+    async function showWeakest() {
+      const btn = document.getElementById("weakest-btn");
+      btn.disabled = true;
+      const t0 = performance.now();
+      await new Promise(r => setTimeout(r, 10));
+      try {
+        const data = GraphCore.showWeakestLarge(stateWithDisables(), [...disabledSet], null, getRenderOpts());
+        highlightNodes = [data.weakest.vertex];
+        drawGraph(data, false);
+        const n = markerById.get(data.weakest.vertex);
+        if (n) { clusterGroup.zoomToShowLayer(n, () => n.openTooltip()); }
+        const partial = data.weakest.partial ? ` (1/${data.weakest.sample_step})` : "";
+        document.getElementById("weakest-text").textContent = `#${data.weakest.vertex} → ${data.weakest.failed_count} стоков${partial}`;
+        document.getElementById("timing").textContent = `${Math.round(performance.now() - t0)} мс`;
+      } catch (e) { showError(e.message); }
+      finally { btn.disabled = false; }
+    }
+
+    async function showWeakestEdge() {
+      const btn = document.getElementById("weakest-edge-btn");
+      btn.disabled = true;
+      await new Promise(r => setTimeout(r, 10));
+      try {
+        const data = GraphCore.showWeakestEdgeLarge(stateWithDisables(), [...disabledSet], null, getRenderOpts());
+        drawGraph(data, false);
+        document.getElementById("weakest-text").textContent = `${data.weakest_edge.label} → ${data.weakest_edge.failed_count}`;
+      } catch (e) { showError(e.message); }
+      finally { btn.disabled = false; }
+    }
+
+    document.querySelectorAll(".preset-row button").forEach(b => {
+      b.addEventListener("click", () => {
+        document.querySelectorAll(".preset-row button").forEach(x => x.classList.remove("active"));
+        b.classList.add("active");
+        document.getElementById("n_stations").value = b.dataset.n;
+      });
+    });
+    document.getElementById("generate-btn").addEventListener("click", generate);
+    document.getElementById("weakest-btn").addEventListener("click", showWeakest);
+    document.getElementById("weakest-edge-btn").addEventListener("click", showWeakestEdge);
+    document.querySelectorAll(".type-f, .status-f, #edge_mode, #flow_threshold").forEach(el => el.addEventListener("change", () => graphState && rebalance()));
+    document.getElementById("toggle-panels-btn").addEventListener("click", () => {
+      document.body.classList.toggle("graph-only");
+      setTimeout(() => map?.invalidateSize(), 120);
+    });
+
+    (async () => {
+      await loadPool();
+      initMap();
+    })();
+  </script>
+</body>
+</html>

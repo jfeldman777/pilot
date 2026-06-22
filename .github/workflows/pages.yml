@@ -25,7 +25,7 @@ jobs:
       - name: Prepare static site
         run: |
           mkdir -p _site/data
-          cp index.html map.html graph_core.js .nojekyll _site/
+          cp index.html map.html large.html large-map.html graph_core.js .nojekyll _site/
           cp data/solar_sample.json _site/data/
       - uses: actions/configure-pages@v4
       - uses: actions/upload-pages-artifact@v3

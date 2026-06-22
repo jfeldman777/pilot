@@ -183,6 +183,7 @@
       consumption: Object.fromEntries(Object.entries(state.consumption).map(([k, v]) => [String(k), v])),
     };
     if (state.geo) out.geo = state.geo;
+    if (state.passport) out.passport = state.passport;
     if (state.disabled_edges?.length) out.disabled_edges = state.disabled_edges.map(e => [...e]);
     return out;
   }
@@ -224,6 +225,7 @@
       production,
       consumption,
       geo: data.geo || null,
+      passport: data.passport || null,
       disabled_edges: (data.disabled_edges || []).map(e => [...e]),
     };
   }
@@ -1552,6 +1554,647 @@
     return result;
   }
 
+  const MAX_LARGE_VERTICES = 2000;
+
+  function nodeName(v, n) {
+    return n <= LETTERS.length && v < LETTERS.length ? LETTERS[v] : String(v);
+  }
+
+  function countRoles(roles) {
+    let g = 0, c = 0, t = 0;
+    for (const v of Object.keys(roles)) {
+      if (roles[v] === "generator") g++;
+      else if (roles[v] === "consumer") c++;
+      else if (roles[v] === "transit") t++;
+    }
+    return { generators: g, consumers: c, transit: t };
+  }
+
+  function enrichSummary(summary, roles) {
+    const rc = countRoles(roles);
+    return { ...summary, ...rc };
+  }
+
+  function parseLargeParams(raw) {
+    const n = +raw.n_vertices;
+    const seed = +raw.seed || 42;
+    const min_degree = +raw.min_degree || 2;
+    const max_degree = +raw.max_degree || 6;
+    const genPct = raw.gen_pct != null ? +raw.gen_pct : 20;
+    const consPct = raw.cons_pct != null ? +raw.cons_pct : 50;
+    let n_generators = raw.n_generators != null ? +raw.n_generators : Math.max(1, Math.round((n * genPct) / 100));
+    let n_consumers = raw.n_consumers != null ? +raw.n_consumers : Math.max(1, Math.round((n * consPct) / 100));
+    let n_transit = n - n_generators - n_consumers;
+    if (n_transit < 1) {
+      n_transit = 1;
+      n_consumers = Math.max(1, n - n_generators - n_transit);
+    }
+    const prodPerGen = raw.prod_per_gen != null ? +raw.prod_per_gen : Math.max(5, Math.round(40 + n / 50));
+    const consPerCon = raw.cons_per_con != null ? +raw.cons_per_con : Math.max(2, Math.round(8 + n / 100));
+    const total_production = n_generators * prodPerGen;
+    const total_consumption = Math.min(n_consumers * consPerCon, Math.floor(total_production * 0.85));
+    return {
+      n_vertices: n,
+      n_generators,
+      n_consumers,
+      n_transit,
+      total_production,
+      total_consumption: Math.max(n_consumers, total_consumption),
+      min_degree,
+      max_degree,
+      seed,
+      mode: "large",
+      scale: "large",
+      get total_surplus() {
+        return this.total_production - this.total_consumption;
+      },
+    };
+  }
+
+  function validateLargeParams(p) {
+    if (p.n_vertices < 10) throw new Error("Large mode: минимум 10 вершин");
+    if (p.n_vertices > MAX_LARGE_VERTICES) throw new Error(`Large mode: максимум ${MAX_LARGE_VERTICES} вершин`);
+    if (p.n_generators < 1 || p.n_consumers < 1 || p.n_transit < 1) {
+      throw new Error("Нужен хотя бы 1 генератор, 1 потребитель и 1 транзит");
+    }
+    if (p.total_production < p.total_consumption) {
+      throw new Error("Производство должно быть не меньше потребления");
+    }
+    if (p.min_degree > p.max_degree) throw new Error("min_degree не может быть больше max_degree");
+  }
+
+  function connectGraphComponents(G, roles, rng) {
+    const comps = [];
+    const seen = new Set();
+    for (const start of G.nodes()) {
+      if (seen.has(start)) continue;
+      const comp = [];
+      const q = [start];
+      seen.add(start);
+      while (q.length) {
+        const v = q.pop();
+        comp.push(v);
+        for (const u of G.neighbors(v)) {
+          if (!seen.has(u)) {
+            seen.add(u);
+            q.push(u);
+          }
+        }
+      }
+      comps.push(comp);
+    }
+    for (let i = 1; i < comps.length; i++) {
+      let linked = false;
+      for (let t = 0; t < 40 && !linked; t++) {
+        const u = rng.choice(comps[i - 1]);
+        const v = rng.choice(comps[i]);
+        if (!G.hasEdge(u, v) && edgeAllowed(u, v, roles)) {
+          G.addEdge(u, v);
+          linked = true;
+        }
+      }
+      if (!linked) G.addEdge(comps[i - 1][0], comps[i][0]);
+    }
+  }
+
+  function generateLargeConnectedGraph(n, minDeg, maxDeg, roles, seed) {
+    const rng = new Random(seed);
+    const G = new Graph(n);
+    const transit = G.nodes().filter(v => roles[v] === "transit");
+    const generators = G.nodes().filter(v => roles[v] === "generator");
+    const consumers = G.nodes().filter(v => roles[v] === "consumer");
+
+    const backbone = transit.length ? transit : G.nodes();
+    for (let i = 0; i < backbone.length; i++) {
+      G.addEdge(backbone[i], backbone[(i + 1) % backbone.length]);
+    }
+
+    function tryAdd(u, v) {
+      if (u === v || G.hasEdge(u, v) || !edgeAllowed(u, v, roles)) return false;
+      if (G.degree(u) >= maxDeg || G.degree(v) >= maxDeg) return false;
+      G.addEdge(u, v);
+      return true;
+    }
+
+    for (const g of generators) {
+      if (G.degree(g) < minDeg) {
+        const pool = transit.length ? transit : G.nodes().filter(v => v !== g);
+        tryAdd(g, rng.choice(pool));
+      }
+    }
+    for (const c of consumers) {
+      if (G.degree(c) < minDeg) {
+        const pool = transit.length ? transit : G.nodes().filter(v => v !== c);
+        tryAdd(c, rng.choice(pool));
+      }
+    }
+
+    const target = Math.min(Math.floor(n * maxDeg / 2), n * 4);
+    let attempts = 0;
+    const maxAttempts = Math.max(n * 30, 5000);
+    while (G.edgeCount() < target && attempts < maxAttempts) {
+      attempts++;
+      const u = rng.randint(0, n - 1);
+      const v = rng.randint(0, n - 1);
+      tryAdd(u, v);
+    }
+
+    for (let iter = 0; iter < n * 8; iter++) {
+      const low = G.nodes().filter(v => G.degree(v) < minDeg);
+      if (!low.length) break;
+      const v = low[0];
+      const u = rng.randint(0, n - 1);
+      tryAdd(v, u);
+    }
+
+    if (!G.isConnected()) {
+      connectGraphComponents(G, roles, rng);
+    }
+    return G;
+  }
+
+  function circleLayout(n, seed) {
+    const rng = new Random(seed + 17);
+    const pos = {};
+    const layers = Math.max(1, Math.ceil(Math.sqrt(n / 12)));
+    let idx = 0;
+    for (let ring = 0; ring < layers && idx < n; ring++) {
+      const inRing = ring === layers - 1 ? n - idx : Math.min(n - idx, Math.max(8, Math.round((2 * Math.PI * (ring + 1) * 6))));
+      const r = (ring + 1) * (120 + Math.sqrt(n) * 8);
+      for (let k = 0; k < inRing && idx < n; k++, idx++) {
+        const angle = (2 * Math.PI * k) / inRing + rng.random() * 0.04;
+        pos[idx] = { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
+      }
+    }
+    while (idx < n) {
+      const angle = rng.random() * 2 * Math.PI;
+      const r = layers * 140;
+      pos[idx] = { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
+      idx++;
+    }
+    return pos;
+  }
+
+  function defaultRenderOpts(n) {
+    return {
+      labelMode: n > 100 ? "none" : "selected",
+      flowThreshold: n > 300 ? 1 : 0,
+      showZeroEdges: n <= 300,
+      typeFilter: { generator: true, consumer: true, transit: true },
+      statusFilter: { active: true, disabled: true, failed: true },
+      highlightNodes: [],
+      edgeMode: n > 300 ? "active" : "all",
+    };
+  }
+
+  function passesNodeFilters(v, roles, disabled, failed, opts) {
+    const role = roles[v];
+    if (!opts.typeFilter[role]) return false;
+    const isOff = disabled.has(v);
+    const isFailed = failed.has(v) && !isOff;
+    if (isOff && !opts.statusFilter.disabled) return false;
+    if (isFailed && !opts.statusFilter.failed) return false;
+    if (!isOff && !isFailed && !opts.statusFilter.active) return false;
+    return true;
+  }
+
+  function buildLargeVisData(G, roles, production, consumption, edgeFlow, surplus, seed, disabled, failed, positions, disabledEdges, opts) {
+    disabled = disabled || new Set();
+    failed = failed || new Set();
+    disabledEdges = disabledEdges || new Set();
+    opts = opts || defaultRenderOpts(G.n);
+    const n = G.n;
+    const defaultPos = circleLayout(n, seed);
+    const highlights = new Set(opts.highlightNodes || []);
+    const nodeSize = n > 500 ? 5 : n > 200 ? 7 : n > 100 ? 10 : 14;
+    const labelMode = opts.labelMode || "none";
+
+    const getPos = v => {
+      if (positions) {
+        const p = positions[String(v)] ?? positions[v];
+        if (p) return { x: p.x, y: p.y };
+      }
+      return defaultPos[v];
+    };
+
+    const nodes = [];
+    for (const v of G.nodes()) {
+      if (!passesNodeFilters(v, roles, disabled, failed, opts)) continue;
+      const { x, y } = getPos(v);
+      const isOff = disabled.has(v);
+      const isFailed = failed.has(v) && !isOff;
+      const showLabel =
+        labelMode === "all" ||
+        (labelMode === "selected" && (highlights.has(v) || isOff || isFailed));
+      let color;
+      if (isOff) color = makeBlackNodeColor();
+      else if (isFailed) color = makeNodeColor("#bdbdbd");
+      else color = makeNodeColor(COLOR[roles[v]]);
+
+      nodes.push({
+        id: v,
+        label: showLabel ? nodeName(v, n) : "",
+        x,
+        y,
+        color,
+        size: nodeSize,
+        font: { size: showLabel ? 10 : 0, color: "#fff" },
+        borderWidth: isOff || isFailed ? 1 : 0.5,
+        disabled_manual: isOff,
+        disabled_failed: isFailed,
+        role: roles[v],
+        role_color: COLOR[roles[v]],
+      });
+    }
+
+    const visibleIds = new Set(nodes.map(nd => nd.id));
+    const inactive = new Set([...disabled, ...failed]);
+    const edges = [];
+    const edgeMode = opts.edgeMode || "all";
+    for (const [u, v] of G.edges) {
+      if (!visibleIds.has(u) || !visibleIds.has(v)) continue;
+      const a = Math.min(u, v);
+      const b = Math.max(u, v);
+      const ek = `${a},${b}`;
+      const edgeOff = disabledEdges.has(ek);
+      const offEdge = inactive.has(u) || inactive.has(v) || edgeOff;
+      const f = offEdge ? 0 : edgeFlow[ek] || 0;
+      const zeroFlow = Math.abs(f) < 1e-9;
+      if (edgeMode === "hidden") continue;
+      if (edgeMode === "active" && zeroFlow && !edgeOff) continue;
+      if (!opts.showZeroEdges && zeroFlow && !edgeOff) continue;
+      if (Math.abs(f) < (opts.flowThreshold || 0) && !edgeOff) continue;
+      const [frm, to, arrow] = edgeDirection(u, v, f);
+      const edge = {
+        id: `${u}-${v}`,
+        from: frm,
+        to,
+        color: {
+          color: edgeOff ? "#e65100" : offEdge ? "#cccccc" : zeroFlow ? "#dddddd" : "#888888",
+          opacity: n > 500 ? 0.25 : 0.5,
+        },
+        width: edgeOff ? 2 : n > 500 ? 0.5 : 1,
+        dashes: offEdge || zeroFlow ? [4, 6] : false,
+        disabled_manual_edge: edgeOff,
+        _flow: f,
+      };
+      if (arrow && !offEdge && n <= 200) edge.arrows = "to";
+      edges.push(edge);
+    }
+    return { nodes, edges };
+  }
+
+  function buildLargeMapVisData(G, roles, production, consumption, edgeFlow, surplus, seed, disabled, failed, geo, positions, disabledEdges, opts) {
+    disabled = disabled || new Set();
+    failed = failed || new Set();
+    disabledEdges = disabledEdges || new Set();
+    opts = opts || defaultRenderOpts(G.n);
+    const n = G.n;
+    const highlights = new Set(opts.highlightNodes || []);
+
+    const nodes = [];
+    for (const v of G.nodes()) {
+      if (!passesNodeFilters(v, roles, disabled, failed, opts)) continue;
+      const { lat, lng } = resolveGeoPos(v, geo, positions);
+      const isOff = disabled.has(v);
+      const isFailed = failed.has(v) && !isOff;
+      const g = geo[String(v)] ?? geo[v] ?? {};
+      const showLabel = opts.labelMode === "all" || (opts.labelMode === "selected" && highlights.has(v));
+      nodes.push({
+        id: v,
+        lat,
+        lng,
+        label: showLabel ? nodeName(v, n) : "",
+        disabled_manual: isOff,
+        disabled_failed: isFailed,
+        role: roles[v],
+        role_color: COLOR[roles[v]],
+        station_name: g.name || "",
+        coord_source: g.coord_source || "OPEN_DATA",
+        synthetic: !!g.synthetic,
+      });
+    }
+
+    const visibleIds = new Set(nodes.map(nd => nodeId(nd.id)));
+    const inactive = new Set([...disabled, ...failed]);
+    const edges = [];
+    const edgeMode = opts.edgeMode || "active";
+    for (const [u, v] of G.edges) {
+      if (!visibleIds.has(u) || !visibleIds.has(v)) continue;
+      const ek = edgeKey(u, v);
+      const edgeOff = disabledEdges.has(ek);
+      const offEdge = inactive.has(u) || inactive.has(v) || edgeOff;
+      const f = offEdge ? 0 : edgeFlow[ek] || 0;
+      const zeroFlow = Math.abs(f) < 1e-9;
+      if (edgeMode === "hidden") continue;
+      if (edgeMode === "active" && zeroFlow && !edgeOff) continue;
+      if (Math.abs(f) < (opts.flowThreshold || 0) && !edgeOff) continue;
+      const [frm, to] = edgeDirection(u, v, f);
+      edges.push({
+        id: `${u}-${v}`,
+        from: frm,
+        to,
+        label: edgeOff ? "✕" : zeroFlow ? "" : String(Math.round(Math.abs(f))),
+        disabled_manual_edge: edgeOff,
+        _flow: Math.abs(f),
+      });
+    }
+    return { nodes, edges };
+  }
+
+  function nodeId(raw) {
+    return typeof raw === "string" ? parseInt(raw, 10) : raw;
+  }
+
+  function evaluateStateLarge(state, disabled = new Set(), positions = null, renderOpts = null) {
+    const G = stateToGraph(state);
+    const params = state.params;
+    const n = params.n_vertices;
+    const opts = renderOpts || defaultRenderOpts(n);
+    const disabledEdges = edgeKeySet(state.disabled_edges);
+    const { edgeFlow, surplus, failed } = computeFlows(
+      G, state.roles, state.production, state.consumption, params.seed, disabled, disabledEdges
+    );
+    const isMap = !!(state.geo && Object.keys(state.geo).length);
+    const { nodes, edges } = isMap
+      ? buildLargeMapVisData(G, state.roles, state.production, state.consumption, edgeFlow, surplus, params.seed, disabled, failed, state.geo, positions, disabledEdges, opts)
+      : buildLargeVisData(G, state.roles, state.production, state.consumption, edgeFlow, surplus, params.seed, disabled, failed, positions, disabledEdges, opts);
+    const nextState = { ...state, disabled_edges: edgeKeyList(disabledEdges) };
+    let activeConsumption = 0;
+    for (const v of G.nodes()) {
+      if (state.roles[v] === "consumer" && !disabled.has(v) && !failed.has(v)) {
+        activeConsumption += state.consumption[v] || 0;
+      }
+    }
+    const rc = countRoles(state.roles);
+    return {
+      ok: true,
+      nodes,
+      edges,
+      checks: [[`Large screening: ${n} узлов`, true]],
+      state: stateToJson(nextState),
+      disabled: [...disabled].sort((a, b) => a - b),
+      disabled_edges: edgeKeyList(disabledEdges),
+      failed: [...failed].sort((a, b) => a - b),
+      render_opts: opts,
+      summary: enrichSummary({
+        vertices: n,
+        production: params.total_production,
+        consumption: params.total_consumption,
+        surplus: params.total_surplus,
+        edges_count: G.edgeCount(),
+        disabled_count: disabled.size,
+        disabled_edges_count: disabledEdges.size,
+        failed_count: failed.size,
+        served_consumption: activeConsumption,
+      }, state.roles),
+      panel: buildPanel(nodes, edges),
+    };
+  }
+
+  function generateLarge(rawParams) {
+    const params = parseLargeParams(rawParams);
+    validateLargeParams(params);
+    const rng = new Random(params.seed);
+    const roles = assignRoles(params.n_vertices, params.n_generators, params.n_consumers, params.seed);
+    const G = generateLargeConnectedGraph(params.n_vertices, params.min_degree, params.max_degree, roles, params.seed);
+    const generators = G.nodes().filter(v => roles[v] === "generator");
+    const consumers = G.nodes().filter(v => roles[v] === "consumer");
+    const productionList = splitTotal(params.total_production, params.n_generators, rng);
+    const consumptionList = splitTotal(params.total_consumption, params.n_consumers, rng);
+    const production = {};
+    const consumption = {};
+    generators.forEach((v, i) => (production[v] = productionList[i]));
+    consumers.forEach((v, i) => (consumption[v] = consumptionList[i]));
+    const state = {
+      params,
+      roles,
+      edges: G.edges.map(e => [...e]),
+      production,
+      consumption,
+    };
+    return evaluateStateLarge(state, new Set());
+  }
+
+  function rebalanceLarge(stateJson, disabledList, positions, renderOpts) {
+    const state = stateFromJson(stateJson);
+    return evaluateStateLarge(state, new Set(disabledList.map(Number)), positions, renderOpts);
+  }
+
+  function subsampleStep(n) {
+    if (n > 800) return 3;
+    if (n > 400) return 2;
+    return 1;
+  }
+
+  function findWeakestVertexLarge(state, baseDisabled = new Set()) {
+    const G = stateToGraph(state);
+    const params = state.params;
+    const n = G.n;
+    const disabledEdges = edgeKeySet(state.disabled_edges);
+    const step = subsampleStep(n);
+    let bestV = 0;
+    let bestFailed = new Set();
+    let bestCount = -1;
+    const vertices = G.nodes().filter(v => !baseDisabled.has(v));
+
+    for (let i = 0; i < vertices.length; i += step) {
+      const v = vertices[i];
+      const trial = new Set(baseDisabled);
+      trial.add(v);
+      const { failed } = computeFlows(
+        G, state.roles, state.production, state.consumption, params.seed, trial, disabledEdges
+      );
+      const failedConsumers = new Set([...failed].filter(f => state.roles[f] === "consumer"));
+      const count = failedConsumers.size;
+      if (count > bestCount || (count === bestCount && v < bestV)) {
+        bestV = v;
+        bestFailed = failedConsumers;
+        bestCount = count;
+      }
+    }
+
+    return {
+      vertex: bestV,
+      letter: nodeName(bestV, n),
+      station_name: state.geo?.[String(bestV)]?.name || "",
+      role: state.roles[bestV],
+      failed_count: bestCount,
+      failed: [...bestFailed].sort((a, b) => a - b),
+      failed_letters: [...bestFailed].sort((a, b) => a - b).map(f => nodeName(f, n)),
+      partial: step > 1,
+      sample_step: step,
+    };
+  }
+
+  function findWeakestEdgeLarge(state, baseDisabled = new Set(), baseDisabledEdges = null) {
+    const G = stateToGraph(state);
+    const params = state.params;
+    const n = G.n;
+    const disabledEdges = baseDisabledEdges || edgeKeySet(state.disabled_edges);
+    const step = subsampleStep(n);
+    let best = null;
+    let bestFailed = new Set();
+    let bestCount = -1;
+    const edgeList = G.edges.filter(([u, v]) => !disabledEdges.has(edgeKey(u, v)));
+
+    for (let i = 0; i < edgeList.length; i += step) {
+      const [u, v] = edgeList[i];
+      const ek = edgeKey(u, v);
+      const trial = new Set(disabledEdges);
+      trial.add(ek);
+      const { failed } = computeFlows(
+        G, state.roles, state.production, state.consumption, params.seed, baseDisabled, trial
+      );
+      const failedConsumers = new Set([...failed].filter(f => state.roles[f] === "consumer"));
+      const count = failedConsumers.size;
+      if (count > bestCount || (count === bestCount && best && ek < best.edgeKey)) {
+        best = { u, v, a: Math.min(u, v), b: Math.max(u, v), edgeKey: ek };
+        bestFailed = failedConsumers;
+        bestCount = count;
+      }
+    }
+
+    if (!best) {
+      return { u: 0, v: 0, edge: [0, 0], edgeKey: "0,0", label: "—", failed_count: 0, failed: [], failed_letters: [], partial: false };
+    }
+
+    return {
+      u: best.u,
+      v: best.v,
+      edge: [best.a, best.b],
+      edgeKey: best.edgeKey,
+      label: `${nodeName(best.u, n)}—${nodeName(best.v, n)}`,
+      failed_count: bestCount,
+      failed: [...bestFailed].sort((a, b) => a - b),
+      failed_letters: [...bestFailed].sort((a, b) => a - b).map(f => nodeName(f, n)),
+      partial: step > 1,
+      sample_step: step,
+    };
+  }
+
+  function showWeakestLarge(stateJson, disabledList, positions, renderOpts) {
+    const state = stateFromJson(stateJson);
+    const disabled = new Set((disabledList || []).map(Number));
+    const weakest = findWeakestVertexLarge(state, disabled);
+    const trial = new Set(disabled);
+    trial.add(weakest.vertex);
+    const opts = { ...(renderOpts || defaultRenderOpts(state.params.n_vertices)), highlightNodes: [weakest.vertex] };
+    const result = evaluateStateLarge(state, trial, positions, opts);
+    result.weakest = weakest;
+    return result;
+  }
+
+  function showWeakestEdgeLarge(stateJson, disabledList, positions, renderOpts) {
+    const state = stateFromJson(stateJson);
+    const disabled = new Set((disabledList || []).map(Number));
+    const disabledEdges = edgeKeySet(state.disabled_edges);
+    const weakest = findWeakestEdgeLarge(state, disabled, disabledEdges);
+    if (!weakest || weakest.edgeKey === "0,0") throw new Error("Нет рёбер для отключения");
+    const nextEdges = new Set(disabledEdges);
+    nextEdges.add(weakest.edgeKey);
+    const nextState = { ...state, disabled_edges: edgeKeyList(nextEdges) };
+    const opts = { ...(renderOpts || defaultRenderOpts(state.params.n_vertices)), highlightNodes: [weakest.u, weakest.v] };
+    const result = evaluateStateLarge(nextState, disabled, positions, opts);
+    result.weakest_edge = weakest;
+    return result;
+  }
+
+  function deriveGeoPool(pool, targetCount, seed) {
+    const rng = new Random(seed);
+    const eligible = pool.filter(s => s.lat != null && s.lon != null);
+    if (!eligible.length) throw new Error("Нет точек с координатами");
+    const out = [];
+    if (eligible.length >= targetCount) {
+      const picked = rng.sample(eligible, targetCount);
+      for (const s of picked) {
+        out.push({ ...s, type: s.type || "solar", coord_source: "OPEN_DATA", synthetic: false });
+      }
+      return { stations: out, passport: { coords: "OPEN_DATA", links: "SYNTHETIC", capacity: "SYNTHETIC", model: "MATHEMATICAL SCREENING" } };
+    }
+    let openCount = 0;
+    let synthCount = 0;
+    while (out.length < targetCount) {
+      const src = rng.choice(eligible);
+      const isSynth = out.length >= eligible.length;
+      const jitter = () => (rng.random() - 0.5) * 0.12;
+      const pt = {
+        ...src,
+        station_id: isSynth ? `synth-${out.length}` : src.station_id,
+        name: isSynth ? `SYNTH ${src.name?.slice(0, 24) || out.length}` : src.name,
+        lat: src.lat + jitter(),
+        lon: src.lon + jitter(),
+        type: "solar",
+        coord_source: isSynth ? "SYNTHETIC_DERIVED" : "OPEN_DATA",
+        synthetic: isSynth,
+      };
+      out.push(pt);
+      if (isSynth) synthCount++;
+      else openCount++;
+    }
+    const coordsLabel = synthCount === 0 ? "OPEN_DATA" : openCount > 0 ? "OPEN_DATA / SYNTHETIC_DERIVED" : "SYNTHETIC_DERIVED";
+    return {
+      stations: out,
+      passport: { coords: coordsLabel, links: "SYNTHETIC", capacity: "SYNTHETIC", model: "MATHEMATICAL SCREENING" },
+    };
+  }
+
+  function generateLargeGeo(pool, opts = {}) {
+    const count = +opts.count || 300;
+    const seed = +opts.seed || 42;
+    if (count < 30) throw new Error("Минимум 30 станций для large geo");
+    if (count > MAX_LARGE_VERTICES) throw new Error(`Максимум ${MAX_LARGE_VERTICES} станций`);
+    const { stations, passport } = deriveGeoPool(pool, count, seed);
+    const third = Math.floor(count / 3);
+    const rem = count - third * 3;
+    const nGen = third + (rem > 0 ? 1 : 0);
+    const nCons = third + (rem > 1 ? 1 : 0);
+    const nTransit = count - nGen - nCons;
+    const roles = assignRoles(count, nGen, nCons, seed);
+    const geo = {};
+    stations.forEach((s, i) => {
+      geo[String(i)] = {
+        lat: s.lat,
+        lon: s.lon,
+        name: s.name || `СЕС ${i}`,
+        oblast: s.oblast || "",
+        station_id: s.station_id || `ses-${i}`,
+        coord_source: s.coord_source,
+        synthetic: s.synthetic,
+      };
+    });
+    const G = generateGeoGraph(count, roles, geo, seed);
+    const rng = new Random(seed);
+    const generators = G.nodes().filter(v => roles[v] === "generator");
+    const consumers = G.nodes().filter(v => roles[v] === "consumer");
+    const totalProd = generators.length * Math.max(8, Math.round(20 + count / 80));
+    const totalCons = Math.min(consumers.length * Math.max(4, Math.round(10 + count / 120)), Math.floor(totalProd * 0.82));
+    const productionList = splitTotal(totalProd, generators.length, rng);
+    const consumptionList = splitTotal(Math.max(consumers.length, totalCons), consumers.length, rng);
+    const production = {};
+    const consumption = {};
+    generators.forEach((v, i) => (production[v] = productionList[i]));
+    consumers.forEach((v, i) => (consumption[v] = consumptionList[i]));
+    const params = {
+      n_vertices: count,
+      n_generators: nGen,
+      n_consumers: nCons,
+      n_transit: nTransit,
+      total_production: totalProd,
+      total_consumption: Math.max(consumers.length, totalCons),
+      min_degree: 1,
+      max_degree: 10,
+      seed,
+      mode: "large_map",
+      scale: "large",
+      get total_surplus() {
+        return this.total_production - this.total_consumption;
+      },
+    };
+    const state = { params, roles, edges: G.edges.map(e => [...e]), production, consumption, geo, passport };
+    return evaluateStateLarge(state, new Set());
+  }
+
   global.GraphCore = {
     generate,
     rebalance,
@@ -1562,5 +2205,16 @@
     planReinforcement,
     applyReinforcement,
     optimizeReinforcement,
+    generateLarge,
+    rebalanceLarge,
+    showWeakestLarge,
+    showWeakestEdgeLarge,
+    generateLargeGeo,
+    deriveGeoPool,
+    defaultRenderOpts,
+    nodeName,
+    MAX_LARGE_VERTICES,
+    findWeakestVertexLarge,
+    findWeakestEdgeLarge,
   };
 })(typeof window !== "undefined" ? window : globalThis);
