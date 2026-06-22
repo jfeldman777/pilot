@@ -115,6 +115,29 @@
     }
     .node-marker.manual { color: transparent; background: #000 !important; }
     .node-marker.failed { animation: failed-pulse 1.3s ease-in-out infinite; }
+
+    .node-cluster {
+      position: relative;
+      width: 68px; height: 68px;
+    }
+    .node-cluster .cluster-item {
+      position: absolute;
+      width: 24px; height: 24px; border-radius: 50%; border: 2px solid #222;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: bold; color: #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+      cursor: pointer;
+      transition: transform 0.12s;
+    }
+    .node-cluster .cluster-item:hover { transform: scale(1.12); z-index: 30 !important; }
+    .node-cluster .cluster-item.manual { color: transparent; background: #000 !important; }
+    .node-cluster .cluster-item.failed { animation: failed-pulse 1.3s ease-in-out infinite; }
+    .node-cluster .cluster-badge {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      width: 10px; height: 10px; border-radius: 50%;
+      background: rgba(255,255,255,0.85); border: 1px solid #888;
+      pointer-events: none; z-index: 1;
+    }
   </style>
 </head>
 <body>
@@ -139,7 +162,7 @@
           <input type="number" id="seed" value="42">
         </div>
         <div class="hint-box" id="pool-hint">Загрузка реестра СЕС…</div>
-        <div class="hint-box" id="weakest-hint">Клик по маркеру или линии — вкл/выкл · перетащите маркер</div>
+        <div class="hint-box" id="weakest-hint">Клик по маркеру или линии — вкл/выкл · перетащите маркер · при совпадении координат — кольцо</div>
         <div class="hint-box" id="weakest-edge-hint">Отключение одного ребра — макс. падений стоков</div>
         <button type="submit" id="generate-btn" disabled>Построить на карте</button>
         <button type="button" id="weakest-btn" class="secondary" disabled>Самая слабая вершина</button>
@@ -210,6 +233,7 @@
     let edgesLayer = null;
     let labelsLayer = null;
     let markerById = new Map();
+    let clusterMarkers = new Map();
     let graphState = null;
     let disabledSet = new Set();
     let disabledEdgesSet = new Set();
@@ -305,7 +329,7 @@
 
     function updateWeakestHint(w) {
       if (!w) {
-        weakestHint.textContent = "Клик по маркеру или линии — вкл/выкл · перетащите маркер";
+        weakestHint.textContent = "Клик по маркеру или линии — вкл/выкл · перетащите маркер · при совпадении координат — кольцо";
         weakestHint.className = "hint-box";
         return;
       }
@@ -377,7 +401,97 @@
         const ll = m.getLatLng();
         out[id] = { lat: ll.lat, lng: ll.lng };
       }
+      for (const { marker, nodeIds } of clusterMarkers.values()) {
+        const ll = marker.getLatLng();
+        for (const id of nodeIds) out[id] = { lat: ll.lat, lng: ll.lng };
+      }
       return out;
+    }
+
+    function displayLatLng(node) {
+      const id = nodeId(node.id);
+      for (const { marker, nodeIds } of clusterMarkers.values()) {
+        if (nodeIds.includes(id)) return marker.getLatLng();
+      }
+      const m = markerById.get(id);
+      if (m) return m.getLatLng();
+      return L.latLng(node.lat, node.lng);
+    }
+
+    function coordKey(lat, lng) {
+      return `${lat.toFixed(5)},${lng.toFixed(5)}`;
+    }
+
+    function groupNodesByLocation(nodes) {
+      const groups = new Map();
+      for (const node of nodes) {
+        const key = coordKey(node.lat, node.lng);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(node);
+      }
+      return groups;
+    }
+
+    function makeClusterIcon(nodes) {
+      const size = 68;
+      const cx = size / 2;
+      const cy = size / 2;
+      const ringR = 16;
+      const itemR = 12;
+      const n = nodes.length;
+      const sorted = [...nodes].sort((a, b) => nodeId(a.id) - nodeId(b.id));
+      const htmlParts = sorted.map((node, i) => {
+        const angle = (2 * Math.PI * i) / n - Math.PI / 2;
+        const x = cx + ringR * Math.cos(angle) - itemR;
+        const y = cy + ringR * Math.sin(angle) - itemR;
+        const z = 10 + i;
+        const letter = String(node.label || "A").split("\n")[0];
+        let bg = ROLE_COLORS[node.role] || "#888";
+        let cls = "cluster-item";
+        let text = letter;
+        if (node.disabled_manual) {
+          bg = "#000";
+          cls += " manual";
+          text = `<span style="color:${node.role_color || ROLE_COLORS[node.role]}">${letter}</span>`;
+        } else if (node.disabled_failed) {
+          bg = blinkPhase ? "#bdbdbd" : "#8a8a8a";
+          cls += " failed";
+          text = `<span style="color:${node.role_color || ROLE_COLORS[node.role]}">${letter}</span>`;
+        }
+        return `<div class="${cls}" data-node-id="${nodeId(node.id)}" style="left:${x}px;top:${y}px;background:${bg};z-index:${z}" title="${letter}">${text}</div>`;
+      });
+      return L.divIcon({
+        className: "",
+        html: `<div class="node-cluster">${n > 2 ? '<div class="cluster-badge"></div>' : ""}${htmlParts.join("")}</div>`,
+        iconSize: [size, size],
+        iconAnchor: [cx, cy],
+      });
+    }
+
+    function attachClusterClickHandlers(marker) {
+      marker.on("add", function () {
+        const el = this.getElement();
+        if (!el || el._clusterClick) return;
+        el._clusterClick = true;
+        L.DomEvent.on(el, "click", e => {
+          const item = e.target.closest?.(".cluster-item");
+          if (!item) return;
+          L.DomEvent.stopPropagation(e);
+          if (rebalancing) return;
+          const id = nodeId(item.dataset.nodeId);
+          if (disabledSet.has(id)) disabledSet.delete(id);
+          else disabledSet.add(id);
+          rebalance();
+        });
+      });
+    }
+
+    function clusterTooltip(nodes) {
+      return nodes.map(n => {
+        const letter = String(n.label || "").split("\n")[0];
+        const name = n.station_name ? ` — ${n.station_name.slice(0, 40)}` : "";
+        return `<b>${letter}</b> ${ROLE_NAMES[n.role] || n.role}${name}`;
+      }).join("<br>");
     }
 
     function initMap() {
@@ -434,18 +548,56 @@
       edgesLayer.clearLayers();
       labelsLayer.clearLayers();
       markerById.clear();
+      clusterMarkers.clear();
 
       const nodeMap = new Map(data.nodes.map(n => [nodeId(n.id), n]));
+      const groups = groupNodesByLocation(data.nodes);
+
+      for (const [key, nodes] of groups) {
+        if (nodes.length === 1) {
+          const node = nodes[0];
+          const id = nodeId(node.id);
+          const m = L.marker([node.lat, node.lng], {
+            icon: makeNodeIcon(node),
+            draggable: true,
+            riseOnHover: true,
+          });
+          m.bindTooltip(nodeTooltip(node), { direction: "top", offset: [0, -10] });
+          m.on("click", () => {
+            if (rebalancing) return;
+            if (disabledSet.has(id)) disabledSet.delete(id);
+            else disabledSet.add(id);
+            rebalance();
+          });
+          m.on("dragend", () => rebalance());
+          markersLayer.addLayer(m);
+          markerById.set(id, m);
+        } else {
+          const nodeIds = nodes.map(n => nodeId(n.id));
+          const m = L.marker([nodes[0].lat, nodes[0].lng], {
+            icon: makeClusterIcon(nodes),
+            draggable: true,
+            riseOnHover: true,
+          });
+          m.bindTooltip(clusterTooltip(nodes), { direction: "top", offset: [0, -14] });
+          attachClusterClickHandlers(m);
+          m.on("dragend", () => rebalance());
+          markersLayer.addLayer(m);
+          clusterMarkers.set(key, { marker: m, nodeIds });
+        }
+      }
 
       for (const e of data.edges) {
         const from = nodeMap.get(nodeId(e.from));
         const to = nodeMap.get(nodeId(e.to));
         if (!from || !to) continue;
+        const fromLl = displayLatLng(from);
+        const toLl = displayLatLng(to);
         const off = from.disabled_manual || to.disabled_manual || from.disabled_failed || to.disabled_failed;
         const edgeOff = e.disabled_manual_edge;
         const zero = !e.label || e.label.endsWith(" 0") || e.label.includes("✕");
         const line = L.polyline(
-          [[from.lat, from.lng], [to.lat, to.lng]],
+          [[fromLl.lat, fromLl.lng], [toLl.lat, toLl.lng]],
           {
             color: edgeOff ? "#e65100" : off ? "#bbb" : zero ? "#ccc" : "#555",
             weight: edgeOff ? 5 : off ? 2 : 3,
@@ -454,7 +606,7 @@
           }
         );
         const hitLine = L.polyline(
-          [[from.lat, from.lng], [to.lat, to.lng]],
+          [[fromLl.lat, fromLl.lng], [toLl.lat, toLl.lng]],
           { color: "#000", weight: 14, opacity: 0 }
         );
         const edgeId = e.id || `${e.from}-${e.to}`;
@@ -465,8 +617,8 @@
         edgesLayer.addLayer(line);
         edgesLayer.addLayer(hitLine);
 
-        const midLat = (from.lat + to.lat) / 2;
-        const midLng = (from.lng + to.lng) / 2;
+        const midLat = (fromLl.lat + toLl.lat) / 2;
+        const midLng = (fromLl.lng + toLl.lng) / 2;
         const lbl = L.marker([midLat, midLng], {
           icon: L.divIcon({
             className: "",
@@ -478,36 +630,25 @@
         labelsLayer.addLayer(lbl);
       }
 
-      for (const node of data.nodes) {
-        const id = nodeId(node.id);
-        const m = L.marker([node.lat, node.lng], {
-          icon: makeNodeIcon(node),
-          draggable: true,
-          riseOnHover: true,
-        });
-        m.bindTooltip(nodeTooltip(node), { direction: "top", offset: [0, -10] });
-        m.on("click", () => {
-          if (rebalancing) return;
-          if (disabledSet.has(id)) disabledSet.delete(id);
-          else disabledSet.add(id);
-          rebalance();
-        });
-        m.on("dragend", () => rebalance());
-        markersLayer.addLayer(m);
-        markerById.set(id, m);
-      }
-
       if (focusNode !== undefined && focusNode !== null) {
         const n = nodeMap.get(nodeId(focusNode));
-        if (n) leafletMap.setView([n.lat, n.lng], Math.max(leafletMap.getZoom(), 8), { animate: true });
+        if (n) {
+          const ll = displayLatLng(n);
+          leafletMap.setView([ll.lat, ll.lng], Math.max(leafletMap.getZoom(), 8), { animate: true });
+        }
       } else if (focusEdge && focusEdge.length === 2) {
         const a = nodeMap.get(nodeId(focusEdge[0]));
         const b = nodeMap.get(nodeId(focusEdge[1]));
         if (a && b) {
-          leafletMap.fitBounds([[a.lat, a.lng], [b.lat, b.lng]], { padding: [80, 80], maxZoom: 10, animate: true });
+          const aLl = displayLatLng(a);
+          const bLl = displayLatLng(b);
+          leafletMap.fitBounds([[aLl.lat, aLl.lng], [bLl.lat, bLl.lng]], { padding: [80, 80], maxZoom: 10, animate: true });
         }
       } else if (fitBounds && data.nodes.length) {
-        const bounds = L.latLngBounds(data.nodes.map(n => [n.lat, n.lng]));
+        const bounds = L.latLngBounds(data.nodes.map(n => {
+          const ll = displayLatLng(n);
+          return [ll.lat, ll.lng];
+        }));
         leafletMap.fitBounds(bounds.pad(0.15));
       }
     }
@@ -521,11 +662,15 @@
       blinkTimer = setInterval(() => {
         if (!lastData) return;
         blinkPhase = !blinkPhase;
+        const nodeMap = new Map(lastData.nodes.map(n => [nodeId(n.id), n]));
         for (const n of lastData.nodes) {
           if (!n.disabled_failed) continue;
           const m = markerById.get(nodeId(n.id));
-          if (!m) continue;
-          m.setIcon(makeNodeIcon(n));
+          if (m) m.setIcon(makeNodeIcon(n));
+        }
+        for (const { marker, nodeIds } of clusterMarkers.values()) {
+          const nodes = nodeIds.map(id => nodeMap.get(id)).filter(Boolean);
+          if (nodes.some(n => n.disabled_failed)) marker.setIcon(makeClusterIcon(nodes));
         }
       }, 650);
     }

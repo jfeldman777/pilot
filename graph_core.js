@@ -1793,12 +1793,14 @@
 
       nodes.push({
         id: v,
-        label: showLabel ? nodeName(v, n) : "",
+        label: "",
+        display_name: nodeName(v, n),
+        show_label: showLabel,
         x,
         y,
         color,
         size: nodeSize,
-        font: { size: showLabel ? 10 : 0, color: "#fff" },
+        font: { size: 0, color: "rgba(0,0,0,0)" },
         borderWidth: isOff || isFailed ? 1 : 0.5,
         disabled_manual: isOff,
         disabled_failed: isFailed,

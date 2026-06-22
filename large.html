@@ -139,7 +139,7 @@
     <p id="weakest-text" style="font-size:11px;color:#666">—</p>
   </aside>
 
-  <script src="graph_core.js?v=5"></script>
+  <script src="graph_core.js?v=6"></script>
   <script>
     const container = document.getElementById("graph");
     const errorEl = document.getElementById("error");
@@ -150,9 +150,38 @@
     const networkOpts = {
       physics: { enabled: false },
       interaction: { dragNodes: true, dragView: true, zoomView: true, hover: true, selectConnectedEdges: false },
-      nodes: { shape: "dot", chosen: false },
+      nodes: { shape: "dot", chosen: { label: false, node: false }, font: { size: 0, color: "rgba(0,0,0,0)" } },
       edges: { chosen: false, selectionWidth: 0, smooth: false },
     };
+
+    function drawNodeLabels(ctx) {
+      if (!network || !nodesDS) return;
+      const positions = network.getPositions();
+      for (const n of nodesDS.get()) {
+        if (!n.show_label) continue;
+        const pos = positions[n.id];
+        if (!pos) continue;
+        const text = n.display_name ?? String(n.id);
+        const r = n.size || 10;
+        const fontSize = Math.max(7, Math.min(16, r * 0.9));
+        ctx.font = `bold ${fontSize}px Arial, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        const off = n.disabled_manual || n.disabled_failed;
+        const fill = off ? (n.role_color || "#333") : "#ffffff";
+        ctx.lineWidth = Math.max(1.5, fontSize * 0.22);
+        ctx.strokeStyle = off ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.6)";
+        ctx.strokeText(text, pos.x, pos.y);
+        ctx.fillStyle = fill;
+        ctx.fillText(text, pos.x, pos.y);
+      }
+    }
+
+    function bindLabelDrawing() {
+      if (!network || network._largeLabels) return;
+      network.on("afterDrawing", drawNodeLabels);
+      network._largeLabels = true;
+    }
 
     function showError(m) { errorEl.textContent = m; errorEl.style.display = m ? "block" : "none"; }
     function nodeId(r) { return typeof r === "string" ? parseInt(r, 10) : r; }
@@ -229,8 +258,11 @@
         edgesDS = new vis.DataSet(data.edges);
         network = new vis.Network(container, { nodes: nodesDS, edges: edgesDS }, networkOpts);
         setupEvents();
+        bindLabelDrawing();
         network.fit({ animation: false });
       }
+      bindLabelDrawing();
+      if (network) network.redraw();
     }
 
     function setupEvents() {
