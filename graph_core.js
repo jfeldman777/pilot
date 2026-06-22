@@ -192,6 +192,10 @@
     if (state.reinforced_edges?.length) out.reinforced_edges = [...state.reinforced_edges];
     if (state.new_edges?.length) out.new_edges = [...state.new_edges];
     if (state.disabled_edges?.length) out.disabled_edges = state.disabled_edges.map(e => [...e]);
+    if (state.edge_reactance) out.edge_reactance = { ...state.edge_reactance };
+    if (state.slack_node != null) out.slack_node = state.slack_node;
+    if (state.voltage_level_kv) out.voltage_level_kv = { ...state.voltage_level_kv };
+    if (state.theta) out.theta = { ...state.theta };
     return out;
   }
 
@@ -238,6 +242,10 @@
       reinforced_edges: data.reinforced_edges || [],
       new_edges: data.new_edges || [],
       disabled_edges: (data.disabled_edges || []).map(e => [...e]),
+      edge_reactance: data.edge_reactance || null,
+      slack_node: data.slack_node != null ? +data.slack_node : null,
+      voltage_level_kv: data.voltage_level_kv || null,
+      theta: data.theta || null,
     };
   }
 
@@ -2740,6 +2748,399 @@
     return result;
   }
 
+  // --- DC power flow (engineering screening, mode 5) ---
+
+  const KV_LEVELS = [35, 110, 220, 330];
+
+  function assetTypeFromRole(role) {
+    if (role === "generator") return "generator";
+    if (role === "consumer") return "load";
+    return "transit";
+  }
+
+  function assignSyntheticReactance(G, state, seed) {
+    const rng = new Random((seed >>> 0) + 303);
+    const x = {};
+    for (const [u, v] of G.edges) {
+      const cap = state.edge_capacity?.[edgeKey(u, v)];
+      const base = cap ? 0.04 + 12 / Math.max(cap, 8) : 0.08 + rng.random() * 0.14;
+      x[edgeKey(u, v)] = Math.round(base * 1000) / 1000;
+    }
+    return x;
+  }
+
+  function assignVoltageLevels(state, seed) {
+    const rng = new Random((seed >>> 0) + 404);
+    const kv = {};
+    for (const v of Object.keys(state.roles)) {
+      kv[v] = KV_LEVELS[rng.randint(0, KV_LEVELS.length - 1)];
+    }
+    return kv;
+  }
+
+  function pickSlackNode(G, state, disabled) {
+    disabled = disabled || new Set();
+    const gens = G.nodes()
+      .filter(v => state.roles[v] === "generator" && !disabled.has(v))
+      .sort((a, b) => a - b);
+    if (state.slack_node != null && gens.includes(state.slack_node)) return state.slack_node;
+    return gens.length ? gens[0] : G.nodes().filter(v => !disabled.has(v)).sort((a, b) => a - b)[0] ?? 0;
+  }
+
+  function initEngineeringState(state, seed) {
+    const G = stateToGraph(state);
+    if (!state.edge_capacity) state.edge_capacity = assignSyntheticEdgeCapacities(G, state, seed);
+    if (!state.edge_reactance) state.edge_reactance = assignSyntheticReactance(G, state, seed);
+    if (!state.priority) state.priority = assignConsumerPriorities(state, seed);
+    if (!state.voltage_level_kv) state.voltage_level_kv = assignVoltageLevels(state, seed);
+    state.slack_node = pickSlackNode(G, state, new Set());
+    state.passport = {
+      coords: state.passport?.coords || "SYNTHETIC",
+      links: "SYNTHETIC",
+      capacity: "SYNTHETIC",
+      reactance: "SYNTHETIC",
+      model: "DC_POWER_FLOW_SCREENING",
+    };
+    if (!state.reinforced_edges) state.reinforced_edges = [];
+    if (!state.new_edges) state.new_edges = [];
+    return state;
+  }
+
+  function nodeInjectionMw(v, roles, production, consumption) {
+    if (roles[v] === "generator") return production[v] || 0;
+    if (roles[v] === "consumer") return -(consumption[v] || 0);
+    return 0;
+  }
+
+  function solveLinearSystem(A, b) {
+    const n = b.length;
+    if (!n) return [];
+    const M = A.map((row, i) => [...row, b[i]]);
+    for (let col = 0; col < n; col++) {
+      let pivot = col;
+      for (let row = col + 1; row < n; row++) {
+        if (Math.abs(M[row][col]) > Math.abs(M[pivot][col])) pivot = row;
+      }
+      if (Math.abs(M[pivot][col]) < 1e-11) return null;
+      if (pivot !== col) [M[col], M[pivot]] = [M[pivot], M[col]];
+      const div = M[col][col];
+      for (let j = col; j <= n; j++) M[col][j] /= div;
+      for (let row = 0; row < n; row++) {
+        if (row === col) continue;
+        const factor = M[row][col];
+        if (Math.abs(factor) < 1e-15) continue;
+        for (let j = col; j <= n; j++) M[row][j] -= factor * M[col][j];
+      }
+    }
+    return M.map(row => row[n]);
+  }
+
+  function solveDCPowerFlow(G, state, disabled = new Set(), disabledEdges = new Set()) {
+    const roles = state.roles;
+    const reactance = state.edge_reactance || {};
+    const activeNodes = G.nodes().filter(v => !disabled.has(v)).sort((a, b) => a - b);
+    if (activeNodes.length < 2) {
+      return { solved: false, error: "Недостаточно активных узлов", slack: null, theta: {}, dcFlow: {}, injections: {} };
+    }
+    const slack = pickSlackNode(G, state, disabled);
+    if (!activeNodes.includes(slack)) {
+      return { solved: false, error: "Slack-узел отключён", slack, theta: {}, dcFlow: {}, injections: {} };
+    }
+    const activeEdges = G.edges.filter(([u, v]) => {
+      const ek = edgeKey(u, v);
+      return !disabled.has(u) && !disabled.has(v) && !disabledEdges.has(ek);
+    });
+    const idx = new Map(activeNodes.map((v, i) => [v, i]));
+    const n = activeNodes.length;
+    const B = Array.from({ length: n }, () => Array(n).fill(0));
+    const injections = {};
+    for (const v of activeNodes) injections[v] = nodeInjectionMw(v, roles, state.production, state.consumption);
+    for (const [u, v] of activeEdges) {
+      const x = reactance[edgeKey(u, v)] || 0.1;
+      if (x < 1e-9) continue;
+      const bij = 1 / x;
+      const iu = idx.get(u);
+      const iv = idx.get(v);
+      B[iu][iu] += bij;
+      B[iv][iv] += bij;
+      B[iu][iv] -= bij;
+      B[iv][iu] -= bij;
+    }
+    const unknown = activeNodes.filter(v => v !== slack);
+    const m = unknown.length;
+    const Br = Array.from({ length: m }, () => Array(m).fill(0));
+    const Pr = Array(m).fill(0);
+    for (let i = 0; i < m; i++) {
+      const vi = unknown[i];
+      Pr[i] = injections[vi];
+      for (let j = 0; j < m; j++) {
+        Br[i][j] = B[idx.get(unknown[i])][idx.get(unknown[j])];
+      }
+    }
+    const thetaPart = m ? solveLinearSystem(Br, Pr) : [];
+    if (m && !thetaPart) {
+      return { solved: false, error: "Сингулярная матрица B (сеть не связна?)", slack, theta: {}, dcFlow: {}, injections };
+    }
+    const theta = {};
+    theta[slack] = 0;
+    unknown.forEach((v, i) => { theta[v] = thetaPart[i]; });
+    const dcFlow = {};
+    for (const [u, v] of G.edges) {
+      const ek = edgeKey(u, v);
+      const off = disabled.has(u) || disabled.has(v) || disabledEdges.has(ek);
+      if (off || theta[u] == null || theta[v] == null) {
+        dcFlow[ek] = 0;
+        continue;
+      }
+      const x = reactance[ek] || 0.1;
+      dcFlow[ek] = (theta[u] - theta[v]) / x;
+    }
+    return { solved: true, error: null, slack, theta, dcFlow, injections };
+  }
+
+  function analyzeDCFeasibility(G, dcFlow, edgeCapacity, disabled = new Set(), disabledEdges = new Set()) {
+    let capacityViolations = 0;
+    let maxLoading = 0;
+    const overCapacity = [];
+    for (const [u, v] of G.edges) {
+      const ek = edgeKey(u, v);
+      if (disabled.has(u) || disabled.has(v) || disabledEdges.has(ek)) continue;
+      const f = dcFlow[ek] || 0;
+      const cap = getEdgeCapacityMw(edgeCapacity, u, v);
+      const loading = cap > 0 ? (Math.abs(f) / cap) * 100 : 0;
+      if (Math.abs(f) > cap + 1e-6) {
+        capacityViolations++;
+        overCapacity.push({ edgeKey: ek, u, v, flow_mw: f, capacity_mw: cap, loading_percent: loading });
+      }
+      maxLoading = Math.max(maxLoading, loading);
+    }
+    return {
+      capacity_violations_count: capacityViolations,
+      max_loading_percent: Math.round(maxLoading * 10) / 10,
+      over_capacity_edges: overCapacity,
+      feasible: capacityViolations === 0,
+    };
+  }
+
+  function engineeringEdgeLabel(u, v, mathF, dcF, cap, flowMode) {
+    const m = Math.round(Math.abs(mathF));
+    const d = Math.round(Math.abs(dcF) * 10) / 10;
+    if (flowMode === "compare") return `${LETTERS[u]}—${LETTERS[v]} M${m}|D${d}`;
+    if (flowMode === "dc") return `${LETTERS[u]}—${LETTERS[v]} ${d}/${Math.round(cap)}`;
+    return edgeLabelWithCapacity(u, v, mathF, cap);
+  }
+
+  function buildEngineeringVisData(G, state, mathFlow, surplus, failed, served, dcResult, flowMode, disabled, disabledEdges, positions, seed) {
+    const roles = state.roles;
+    const production = state.production;
+    const consumption = state.consumption;
+    const edgeCapacity = state.edge_capacity || {};
+    const reactance = state.edge_reactance || {};
+    const priorities = state.priority || {};
+    const reinforcedSet = new Set((state.reinforced_edges || []).map(k => (typeof k === "string" ? k : edgeKey(k[0], k[1]))));
+    const newSet = new Set((state.new_edges || []).map(k => (typeof k === "string" ? k : edgeKey(k[0], k[1]))));
+    const dcFlow = dcResult.dcFlow || {};
+    const theta = dcResult.theta || {};
+    const displayFlow = flowMode === "dc" ? dcFlow : mathFlow;
+    const base = buildVisData(
+      G, roles, production, consumption, displayFlow, surplus, seed,
+      disabled, failed, positions, disabledEdges, edgeCapacity, priorities, reinforcedSet, newSet, served
+    );
+    const kv = state.voltage_level_kv || {};
+    for (const node of base.nodes) {
+      const v = node.id;
+      const role = roles[v];
+      node.asset_type = assetTypeFromRole(role);
+      node.generation_mw = role === "generator" ? (production[v] || 0) : 0;
+      node.load_mw = role === "consumer" ? (consumption[v] || 0) : 0;
+      node.voltage_level_kv = kv[v] ?? kv[String(v)] ?? null;
+      node.theta = theta[v] != null ? Math.round(theta[v] * 10000) / 10000 : null;
+      node.is_slack = v === dcResult.slack;
+      if (node.is_slack) node.title += `\nSLACK · θ=0`;
+      if (node.theta != null) node.title += `\nθ=${node.theta}`;
+      if (node.voltage_level_kv) node.title += `\n${node.voltage_level_kv} kV`;
+    }
+    for (const edge of base.edges) {
+      const [u, v] = String(edge.id).split("-").map(Number);
+      const ek = edgeKey(u, v);
+      const mf = mathFlow[ek] || 0;
+      const df = dcFlow[ek] || 0;
+      const cap = getEdgeCapacityMw(edgeCapacity, u, v);
+      const x = reactance[ek] || 0.1;
+      edge.reactance = x;
+      edge.math_flow_mw = mf;
+      edge.dc_flow_mw = df;
+      edge.flow_difference = Math.round((df - mf) * 100) / 100;
+      const showF = flowMode === "dc" ? df : mf;
+      const violation = !edge.disabled_manual_edge && Math.abs((flowMode === "dc" ? df : mf)) > cap + 1e-6;
+      edge.capacity_violation = violation;
+      edge.flow_mw = showF;
+      edge.loading_percent = cap > 0 ? Math.round((Math.abs(showF) / cap) * 1000) / 10 : 0;
+      if (!edge.disabled_manual_edge) {
+        edge.label = engineeringEdgeLabel(u, v, mf, df, cap, flowMode);
+        if (flowMode === "compare") {
+          edge.title = `math ${Math.round(mf)} MW · dc ${Math.round(df * 10) / 10} MW · Δ ${edge.flow_difference}`;
+        }
+      }
+    }
+    return base;
+  }
+
+  function evaluateStateEngineering(state, disabled = new Set(), positions = null, engOpts = {}) {
+    const G = stateToGraph(state);
+    const params = state.params;
+    const seed = params.seed;
+    initEngineeringState(state, seed);
+    const flowMode = engOpts.flowMode || "dc";
+    const disabledEdges = edgeKeySet(state.disabled_edges);
+    const { edgeFlow: mathFlow, surplus, failed, served } = computeFlowsFromState(G, state, disabled, disabledEdges);
+    const mathFeas = analyzeFeasibility(G, state, mathFlow, failed, served, state.edge_capacity, state.priority);
+    const dcResult = solveDCPowerFlow(G, state, disabled, disabledEdges);
+    state.theta = dcResult.theta;
+    state.slack_node = dcResult.slack;
+    const dcFeas = analyzeDCFeasibility(G, dcResult.dcFlow || {}, state.edge_capacity, disabled, disabledEdges);
+    const { nodes, edges } = buildEngineeringVisData(
+      G, state, mathFlow, surplus, failed, served, dcResult, flowMode,
+      disabled, disabledEdges, positions, seed
+    );
+    const balances = nodeBalance(G, state.production, state.consumption, mathFlow, surplus);
+    const checks = runChecks(G, state.roles, state.production, state.consumption, surplus, balances, params, disabled, failed);
+    checks.push({
+      name: `DC solved: ${dcResult.solved ? "yes" : "no"}${dcResult.error ? ` (${dcResult.error})` : ""}`,
+      ok: dcResult.solved,
+    });
+    if (dcResult.slack != null) {
+      checks.push({ name: `Slack: ${nodeName(dcResult.slack, params.n_vertices)} (#${dcResult.slack})`, ok: true });
+    }
+    checks.push({
+      name: `DC max loading: ${dcFeas.max_loading_percent}%`,
+      ok: dcFeas.capacity_violations_count === 0,
+    });
+    if (dcFeas.capacity_violations_count > 0) {
+      checks.push({ name: `DC over capacity: ${dcFeas.capacity_violations_count} рёбер`, ok: false });
+    }
+    const nextState = { ...state, disabled_edges: edgeKeyList(disabledEdges) };
+    return {
+      ok: true,
+      nodes,
+      edges,
+      checks,
+      state: stateToJson(nextState),
+      disabled: [...disabled].sort((a, b) => a - b),
+      disabled_edges: edgeKeyList(disabledEdges),
+      failed: [...failed].sort((a, b) => a - b),
+      summary: enrichSummary({
+        vertices: params.n_vertices,
+        production: params.total_production,
+        consumption: params.total_consumption,
+        surplus: params.total_surplus,
+        edges_count: G.edgeCount(),
+        disabled_count: disabled.size,
+        disabled_edges_count: disabledEdges.size,
+        failed_count: failed.size,
+        feasibility: mathFeas,
+        dc_solved: dcResult.solved,
+        dc_max_loading_percent: dcFeas.max_loading_percent,
+        dc_capacity_violations: dcFeas.capacity_violations_count,
+        slack_node: dcResult.slack,
+      }, state.roles),
+      feasibility: mathFeas,
+      dc: {
+        solved: dcResult.solved,
+        error: dcResult.error,
+        slack: dcResult.slack,
+        feasibility: dcFeas,
+        theta: dcResult.theta,
+      },
+      panel: buildPanel(nodes, edges),
+      flow_mode: flowMode,
+    };
+  }
+
+  function generateEngineering(rawParams, engOpts = {}) {
+    const params = parseParams(rawParams);
+    validateParams(params);
+    params.mode = "engineering";
+    const rng = new Random(params.seed);
+    const roles = assignRoles(params.n_vertices, params.n_generators, params.n_consumers, params.seed);
+    const G = generateConnectedGraph(params.n_vertices, params.min_degree, params.max_degree, roles, params.seed);
+    const generators = G.nodes().filter(v => roles[v] === "generator");
+    const consumers = G.nodes().filter(v => roles[v] === "consumer");
+    const productionList = splitTotal(params.total_production, params.n_generators, rng);
+    const consumptionList = splitTotal(params.total_consumption, params.n_consumers, rng);
+    const production = {};
+    const consumption = {};
+    generators.forEach((v, i) => (production[v] = productionList[i]));
+    consumers.forEach((v, i) => (consumption[v] = consumptionList[i]));
+    const state = { params, roles, edges: G.edges.map(e => [...e]), production, consumption };
+    initEngineeringState(state, params.seed);
+    return evaluateStateEngineering(state, new Set(), null, engOpts);
+  }
+
+  function rebalanceEngineering(stateJson, disabledList, positions, engOpts) {
+    const state = stateFromJson(stateJson);
+    return evaluateStateEngineering(state, new Set(disabledList.map(Number)), positions, engOpts);
+  }
+
+  function rankN1Scenario(a, b) {
+    if (b.dc_capacity_violations !== a.dc_capacity_violations) return b.dc_capacity_violations - a.dc_capacity_violations;
+    if (b.dc_max_loading_percent !== a.dc_max_loading_percent) return b.dc_max_loading_percent - a.dc_max_loading_percent;
+    return b.critical_unserved_count - a.critical_unserved_count;
+  }
+
+  function dcN1Analysis(stateJson, disabledList = [], positions = null, engOpts = {}) {
+    const state = stateFromJson(stateJson);
+    const baseDisabled = new Set(disabledList.map(Number));
+    const G = stateToGraph(state);
+    initEngineeringState(state, state.params.seed);
+    const scenarios = [];
+    for (const [u, v] of G.edges) {
+      const ek = edgeKey(u, v);
+      const trialEdges = edgeKeySet(state.disabled_edges);
+      trialEdges.add(ek);
+      const dcResult = solveDCPowerFlow(G, state, baseDisabled, trialEdges);
+      const dcFeas = analyzeDCFeasibility(G, dcResult.dcFlow || {}, state.edge_capacity, baseDisabled, trialEdges);
+      const { failed, served } = computeFlowsFromState(G, state, baseDisabled, trialEdges);
+      let criticalUnserved = 0;
+      for (const node of G.nodes()) {
+        if (state.roles[node] !== "consumer" || baseDisabled.has(node) || failed.has(node)) continue;
+        if ((state.priority[node] || "") === "critical" && (served[node] || 0) < (state.consumption[node] || 0) - 1e-6) {
+          criticalUnserved++;
+        }
+      }
+      scenarios.push({
+        edgeKey: ek,
+        u,
+        v,
+        label: `${nodeName(u, G.n)}-${nodeName(v, G.n)}`,
+        dc_solved: dcResult.solved,
+        dc_capacity_violations: dcFeas.capacity_violations_count,
+        dc_max_loading_percent: dcFeas.max_loading_percent,
+        critical_unserved_count: criticalUnserved,
+        over_capacity: dcFeas.over_capacity_edges.slice(0, 5),
+      });
+    }
+    scenarios.sort(rankN1Scenario);
+    const worst = scenarios[0] || null;
+    const result = evaluateStateEngineering(state, baseDisabled, positions, engOpts);
+    result.dc_n1 = { scenarios: scenarios.slice(0, 15), worst };
+    if (worst) {
+      result.dc_n1_summary = `Худшее N-1: ${worst.label} · DC violations ${worst.dc_capacity_violations} · loading ${worst.dc_max_loading_percent}%`;
+      const hi = new Set(engOpts.highlightNodes || []);
+      hi.add(worst.u);
+      hi.add(worst.v);
+      engOpts = { ...engOpts, highlightNodes: [...hi] };
+      const trialEdges = edgeKeySet(state.disabled_edges);
+      trialEdges.add(worst.edgeKey);
+      const stateTrial = { ...stateFromJson(stateJson), disabled_edges: edgeKeyList(trialEdges) };
+      const trialView = evaluateStateEngineering(stateTrial, baseDisabled, positions, engOpts);
+      trialView.dc_n1 = result.dc_n1;
+      trialView.dc_n1_summary = result.dc_n1_summary;
+      return trialView;
+    }
+    return result;
+  }
+
   global.GraphCore = {
     generate,
     rebalance,
@@ -2765,5 +3166,11 @@
     MAX_LARGE_VERTICES,
     findWeakestVertexLarge,
     findWeakestEdgeLarge,
+    generateEngineering,
+    rebalanceEngineering,
+    evaluateStateEngineering,
+    solveDCPowerFlow,
+    dcN1Analysis,
+    initEngineeringState,
   };
 })(typeof window !== "undefined" ? window : globalThis);

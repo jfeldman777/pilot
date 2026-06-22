@@ -22,6 +22,11 @@
   background: #e3f2fd;
   border-color: #2196F3;
 }
+/* Кнопка fixed — не перекрывает заголовок сайдбара */
+body:has(.home-btn) .sidebar > h1:first-child {
+  padding-left: 52px;
+  padding-right: 10px;
+}
 body.graph-only .home-btn {
   top: 10px;
   left: 10px;
