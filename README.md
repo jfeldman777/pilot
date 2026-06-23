@@ -51,9 +51,37 @@ python app.py
 
 Откроется http://127.0.0.1:5001 — **начните с [start.html](http://127.0.0.1:5001/start.html)** (самостоятельный просмотр ~7 мин).
 
-Документация: [readme.html](http://127.0.0.1:5001/readme.html) · [roadmap.html](http://127.0.0.1:5001/roadmap.html) (соответствие ТЗ).
+Документация: [readme.html](http://127.0.0.1:5001/readme.html) · [roadmap.html](http://127.0.0.1:5001/roadmap.html) · [architecture.html](http://127.0.0.1:5001/architecture.html) (фаза 3).
 
-Расчёты выполняются в браузере (`graph_core.js`), отдельный backend для вычислений не нужен.
+Расчёты в браузере — `graph_core.js`. **Фаза 3:** отдельный расчётный API (pandapower DC) и batch War-Gaming вне браузера.
+
+### API v2 (pandapower, фаза 3)
+
+```bash
+pip install -r api/requirements.txt
+python -m uvicorn api.main:app --port 8000
+```
+
+- OpenAPI: http://127.0.0.1:8000/docs  
+- UI: http://127.0.0.1:5001/api-demo.html  
+- `POST /dc-run` — DC screening (до 20 buses в MVP)  
+- `GET /calibration/status` — заглушка контура калибровки
+
+### Batch War-Gaming (фаза 3)
+
+```bash
+node scripts/run_mc_batch.mjs 1000 42
+```
+
+Результаты: `data/batch/latest_summary.json` + CSV. Просмотр: http://127.0.0.1:5001/batch-results.html
+
+### Docker (фаза 3)
+
+```bash
+docker compose up --build
+```
+
+Web :5001 · API :8000 · PostgreSQL :5432 (заготовка под сценарии).
 
 ## 4a. Для самостоятельного просмотра (без автора)
 
@@ -62,7 +90,7 @@ python app.py
 1. Откройте **start.html** → кнопка **«Демо: волна ударов»** (или сразу `eng-large-map.html?demo=1`).
 2. Дождитесь окончания автодемо (~2–3 мин): сеть 100 узлов → 100 сценариев поражения → худший сценарий → Pareto top 3 на карте.
 3. Посмотрите **Pareto-кривую** в правой панели.
-4. Прочитайте **roadmap.html** — что из ТЗ сделано и что в этапе 2.
+4. Прочитайте **roadmap** — что из вашего ТЗ уже есть, что — этап 4. Честное сравнение с radai-1984.dev.
 
 **Что это НЕ обещает:** операционный клон ОЭС Украины, AC/pandapower, миллионы прогонов, агент 24/7, продукты A2/A3. Это **screening-MVP контура A1** — доказательство, что цепочка «сеть → поражение → слабые места → что укрепить» работает end-to-end.
 
@@ -92,7 +120,7 @@ python app.py
 
 ## 7. Ограничения MVP
 
-- Нет AC/Newton-Raphson, нет pandapower.
+- Нет AC/Newton-Raphson в браузере; **pandapower DC** — только в API v2 (до 20 buses).
 - Нет привязки к реальной SCADA/EMS, нет актуальных режимов сети.
 - Monte Carlo — демо (сотни–тысячи прогонов), не промышленный объём.
 - N-1 на 300/1000 узлах — выборочный scan (sampled), не полный перебор.
@@ -112,7 +140,10 @@ python app.py
 |----------|------------|
 | `TESTING_GUIDE.md` | Полный чеклист проверки всех 8 режимов |
 | `DELIVERY_CHECKLIST.md` | Быстрый чеклист перед отправкой заказчику |
-| `ROADMAP.md` / `roadmap.html` | Соответствие ТЗ заказчика и этап 2 |
+| `ROADMAP.md` / `roadmap.html` | Соответствие ТЗ заказчика и этапы 2–4 |
+| `ARCHITECTURE.md` / `architecture.html` | Архитектура: браузер → API → batch → агент (фаза 3) |
+| `api-demo.html` | Интерактивный вызов `POST /dc-run` |
+| `batch-results.html` | Просмотр последнего batch War-Gaming |
 | `start.html` | Точка входа для самостоятельного просмотра |
 | `docs/TESTING_GUIDE_5_2.md` … `6_3.md` | Детальные сценарии по версиям |
 

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API demo — pandapower DC</title>
+  <link rel="stylesheet" href="home-nav.css">
+  <style>
+    body { font-family: "Segoe UI", Arial, sans-serif; margin: 0; padding: 56px 20px 40px; background: #f5f6f8; }
+    .wrap { max-width: 820px; margin: 0 auto; }
+    h1 { color: #283593; font-size: 1.4rem; }
+    .box { background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 16px; margin: 12px 0; }
+    label { font-size: 12px; font-weight: 600; }
+    input { width: 100%; padding: 8px; margin: 4px 0 10px; border: 1px solid #ccc; border-radius: 6px; }
+    button { padding: 10px 16px; background: #5c6bc0; color: #fff; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; margin-right: 8px; }
+    button.secondary { background: #fff; color: #3949ab; border: 1px solid #5c6bc0; }
+    pre { background: #263238; color: #eceff1; padding: 12px; border-radius: 8px; overflow: auto; font-size: 11px; max-height: 320px; }
+    .warn { background: #ffebee; border: 1px solid #ef9a9a; padding: 10px; border-radius: 6px; font-size: 12px; color: #b71c1c; margin-bottom: 12px; }
+    a { color: #1565c0; }
+  </style>
+</head>
+<body>
+  <a href="architecture.html" class="home-btn" title="Architecture">⌂</a>
+  <div class="wrap">
+    <h1>API v2 — pandapower DC screening</h1>
+    <div class="warn">SYNTHETIC · NOT operational · запустите API: <code>uvicorn api.main:app --port 8000</code> или <code>docker compose up</code></div>
+    <div class="box">
+      <label>API base URL</label>
+      <input id="api-base" value="http://127.0.0.1:8000">
+      <button type="button" id="health-btn">Health</button>
+      <button type="button" id="example-btn" class="secondary">Load example</button>
+      <button type="button" id="run-btn">POST /dc-run</button>
+    </div>
+    <div class="box">
+      <label>Request JSON</label>
+      <textarea id="req-json" style="width:100%;height:200px;font-family:monospace;font-size:11px"></textarea>
+    </div>
+    <div class="box">
+      <label>Response</label>
+      <pre id="out">—</pre>
+    </div>
+    <p style="font-size:12px"><a href="http://127.0.0.1:8000/docs" target="_blank" rel="noopener">OpenAPI /docs</a> · <a href="architecture.html">Architecture</a></p>
+  </div>
+  <script>
+    const baseEl = document.getElementById("api-base");
+    const reqEl = document.getElementById("req-json");
+    const outEl = document.getElementById("out");
+
+    async function apiGet(path) {
+      const r = await fetch(baseEl.value.replace(/\/$/, "") + path);
+      const t = await r.text();
+      try { return { ok: r.ok, data: JSON.parse(t) }; } catch { return { ok: r.ok, data: t }; }
+    }
+
+    document.getElementById("health-btn").addEventListener("click", async () => {
+      const res = await apiGet("/health");
+      outEl.textContent = JSON.stringify(res.data, null, 2);
+    });
+
+    document.getElementById("example-btn").addEventListener("click", async () => {
+      const res = await apiGet("/dc-run/example");
+      reqEl.value = JSON.stringify(res.data, null, 2);
+      outEl.textContent = "Example loaded";
+    });
+
+    document.getElementById("run-btn").addEventListener("click", async () => {
+      try {
+        const body = JSON.parse(reqEl.value);
+        const r = await fetch(baseEl.value.replace(/\/$/, "") + "/dc-run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await r.json();
+        outEl.textContent = JSON.stringify(data, null, 2);
+      } catch (e) {
+        outEl.textContent = String(e);
+      }
+    });
+
+    document.getElementById("example-btn").click();
+  </script>
+</body>
+</html>

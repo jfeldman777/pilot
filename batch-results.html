@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Batch War-Gaming results</title>
+  <link rel="stylesheet" href="home-nav.css">
+  <style>
+    body { font-family: "Segoe UI", Arial, sans-serif; margin: 0; padding: 56px 20px 40px; background: #f5f6f8; }
+    .wrap { max-width: 800px; margin: 0 auto; }
+    h1 { color: #283593; }
+    .box { background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 16px; margin: 12px 0; }
+    pre { background: #263238; color: #eceff1; padding: 12px; border-radius: 8px; overflow: auto; font-size: 11px; }
+    .cmd { background: #e8eaf6; padding: 10px; border-radius: 6px; font-family: monospace; font-size: 12px; }
+    a { color: #1565c0; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <a href="architecture.html" class="home-btn" title="Architecture">⌂</a>
+  <div class="wrap">
+    <h1>Batch War-Gaming</h1>
+    <div class="box">
+      <p>Запуск вне браузера (phase 3 worker):</p>
+      <div class="cmd">node scripts/run_mc_batch.mjs 1000 42</div>
+      <p style="font-size:12px;color:#666;margin-top:8px">Результаты: <code>data/batch/latest_summary.json</code> + CSV</p>
+    </div>
+    <div class="box">
+      <h3 style="margin-top:0">latest_summary.json</h3>
+      <pre id="summary">Загрузка…</pre>
+      <p id="csv-link"></p>
+    </div>
+  </div>
+  <script>
+    fetch("data/batch/latest_summary.json")
+      .then(r => { if (!r.ok) throw new Error("Нет batch — запустите scripts/run_mc_batch.mjs"); return r.json(); })
+      .then(j => {
+        document.getElementById("summary").textContent = JSON.stringify(j, null, 2);
+        if (j.csv_file) {
+          document.getElementById("csv-link").innerHTML =
+            `<a href="data/batch/${j.csv_file}" download>${j.csv_file}</a> (${j.runs} runs · ${j.elapsed_ms} ms)`;
+        }
+      })
+      .catch(e => { document.getElementById("summary").textContent = e.message; });
+  </script>
+</body>
+</html>

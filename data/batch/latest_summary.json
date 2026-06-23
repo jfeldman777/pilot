@@ -1,0 +1,55 @@
+{
+  "generated_at": "2026-06-23T10:45:40.915Z",
+  "engine": "graph_core.js batch worker",
+  "profile": "tso_backbone",
+  "nodes": 100,
+  "seed": 42,
+  "runs": 100,
+  "elapsed_ms": 1334,
+  "avg_damage_score": 25.71,
+  "worst_run_id": 60,
+  "worst_damage": 181,
+  "pareto": [
+    {
+      "protect_count": 1,
+      "damage_reduced_percent": 25.2
+    },
+    {
+      "protect_count": 3,
+      "damage_reduced_percent": 33.7
+    },
+    {
+      "protect_count": 5,
+      "damage_reduced_percent": 25.1
+    }
+  ],
+  "top_risk_objects": [
+    {
+      "object": "79-87",
+      "frequency_in_worst": 3,
+      "avg_damage_score": 32
+    },
+    {
+      "object": "56-84",
+      "frequency_in_worst": 2,
+      "avg_damage_score": 176
+    },
+    {
+      "object": "15 (#15)",
+      "frequency_in_worst": 2,
+      "avg_damage_score": 131
+    },
+    {
+      "object": "45-73",
+      "frequency_in_worst": 2,
+      "avg_damage_score": 93
+    },
+    {
+      "object": "29-95",
+      "frequency_in_worst": 2,
+      "avg_damage_score": 93
+    }
+  ],
+  "csv_file": "mc_batch_2026-06-23T10-45-40.csv",
+  "disclaimer": "SYNTHETIC screening batch · NOT operational"
+}

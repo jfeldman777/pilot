@@ -71,6 +71,21 @@ def roadmap_page():
     return send_from_directory(ROOT, "roadmap.html")
 
 
+@app.get("/architecture.html")
+def architecture_page():
+    return send_from_directory(ROOT, "architecture.html")
+
+
+@app.get("/api-demo.html")
+def api_demo_page():
+    return send_from_directory(ROOT, "api-demo.html")
+
+
+@app.get("/batch-results.html")
+def batch_results_page():
+    return send_from_directory(ROOT, "batch-results.html")
+
+
 @app.get("/readme.html")
 def readme_page():
     return send_from_directory(ROOT, "readme.html")
@@ -87,7 +102,9 @@ def open_browser(port=5001):
 
 if __name__ == "__main__":
     port = 5001
+    host = os.environ.get("HOST", "127.0.0.1")
     if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
         print(f"Откройте: http://127.0.0.1:{port}/start.html")
+        print(f"API v2:  http://127.0.0.1:8000/docs  (uvicorn api.main:app --port 8000)")
         Timer(1.0, lambda: open_browser(port)).start()
-    app.run(debug=True, use_reloader=False, port=port)
+    app.run(debug=True, use_reloader=False, port=port, host=host)
