@@ -5,73 +5,175 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Письмо заказчику — MVP</title>
   <link rel="stylesheet" href="home-nav.css">
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     * { box-sizing: border-box; }
-    body {
-      font-family: "Segoe UI", Arial, sans-serif;
-      margin: 0;
-      padding: 56px 20px 48px;
-      background: #f5f6f8;
-      color: #222;
-      line-height: 1.6;
-    }
+    body { font-family: "Segoe UI", Arial, sans-serif; margin: 0; padding: 56px 20px 48px; background: #f5f6f8; color: #222; line-height: 1.6; }
     .wrap { max-width: 820px; margin: 0 auto; }
-    .top-bar {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      align-items: center;
-      margin-bottom: 18px;
-      font-size: 13px;
-    }
-    .top-bar a { color: #1565c0; text-decoration: none; font-weight: 600; }
+    .top-bar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; font-size: 13px; }
+    .top-bar a { color: #1565c0; font-weight: 600; text-decoration: none; }
     .top-bar a:hover { text-decoration: underline; }
     .top-bar .sep { color: #bbb; }
-    #content {
-      background: #fff;
-      border: 1px solid #ddd;
-      border-radius: 10px;
-      padding: 28px 32px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.06);
-    }
+    #content { background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 28px 32px; box-shadow: 0 2px 10px rgba(0,0,0,0.06); }
     #content h1 { font-size: 1.65rem; margin-top: 0; color: #283593; border-bottom: 2px solid #e8eaf6; padding-bottom: 10px; }
     #content h2 { font-size: 1.2rem; margin-top: 1.6em; color: #3949ab; }
-    #content h3 { font-size: 1.05rem; margin-top: 1.2em; }
+    #content h3 { font-size: 1.05rem; margin-top: 1.2em; color: #3949ab; }
     #content table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 12px 0; }
     #content th, #content td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; vertical-align: top; }
     #content th { background: #e8eaf6; }
     #content tr:nth-child(even) td { background: #fafafa; }
     #content code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; font-size: 0.92em; }
     #content pre { background: #263238; color: #eceff1; padding: 14px 16px; border-radius: 8px; overflow-x: auto; font-size: 12px; white-space: pre-wrap; }
-    #content pre code { background: none; padding: 0; color: inherit; }
     #content a { color: #1565c0; }
-    .loading { color: #666; font-style: italic; }
-    .err { color: #c62828; font-weight: 600; }
+    #content hr { border: none; border-top: 1px solid #ddd; margin: 1.5em 0; }
+    #content p { margin: 0.6em 0; }
   </style>
 </head>
 <body>
   <a href="index.html" class="home-btn" title="Выбор входа">⌂</a>
   <div class="wrap">
     <div class="top-bar">
-      <a href="index.html">← Вход</a>
-      <span class="sep">·</span>
-      <a href="start.html">★ Guided demo</a>
-      <span class="sep">·</span>
-      <a href="eng-large-map.html?demo=1">Автодемо</a>
-      <span class="sep">·</span>
+      <a href="index.html">← Вход</a><span class="sep">·</span>
+      <a href="start.html">★ Guided demo</a><span class="sep">·</span>
+      <a href="eng-large-map.html?demo=1">Автодемо</a><span class="sep">·</span>
       <a href="roadmap.html">Roadmap</a>
     </div>
-    <div id="content" class="loading">Загрузка письма…</div>
+    <div id="content">
+<h1>Письмо заказчику — MVP screening-симулятор сети</h1>
+<p><strong>Тема:</strong> Демо MVP контура A1 — просмотр в браузере и опции развёртывания на сервере</p>
+<hr>
+<h2>Для Telegram (скопируйте этот блок)</h2>
+<pre>Добрый день!
+MVP screening-симулятор сети (контур A1). Synthetic · not operational.
+▶ Вход и demo:
+https://jfeldman777.github.io/pilot/
+▶ Письмо (что работает / чего нет):
+https://jfeldman777.github.io/pilot/customer-letter.html
+▶ Сразу автодемо (~3 мин):
+https://jfeldman777.github.io/pilot/eng-large-map.html?demo=1
+▶ Репозиторий:
+https://github.com/jfeldman777/pilot
+В браузере: War-Gaming, Pareto, режим 8 — без установки.
+API / batch / Docker — только при развёртывании на сервере.</pre>
+<hr>
+<p>Добрый день,</p>
+<p>Направляю демонстрационный MVP для оценки концепции <strong>War-Gaming / screening устойчивости сети</strong> (контур A1 — физическая безопасность).</p>
+<p><strong>Главный вопрос demo:</strong> какой минимальный набор объектов укрепить, чтобы сеть пережила сценарии поражения?</p>
+<p><strong>Важно сразу:</strong> все данные <strong>synthetic</strong>, модель <strong>not operational</strong> — это screening-прототип, а не операционный клон ОЭС и не инженерное заключение.</p>
+<p><strong>Репозиторий:</strong> <a href="https://github.com/jfeldman777/pilot" target="_blank" rel="noopener">https://github.com/jfeldman777/pilot</a>  </p>
+<p><strong>Вход (браузер):</strong> <a href="https://jfeldman777.github.io/pilot/" target="_blank" rel="noopener">https://jfeldman777.github.io/pilot/</a>  </p>
+<p><strong>Письмо (читаемая версия):</strong> <a href="https://jfeldman777.github.io/pilot/customer-letter.html" target="_blank" rel="noopener">https://jfeldman777.github.io/pilot/customer-letter.html</a></p>
+<hr>
+<h2>Часть 1. Что реально работает в браузере (подробно)</h2>
+<h3>Условия</h3>
+<table>
+<tr><th>Параметр</th><th>Значение</th></tr>
+<tr><td>Установка</td><td><strong>Не нужна</strong> — только ссылка в браузере</td></tr>
+<tr><td>Браузер</td><td>Chrome или Edge (рекомендуется), актуальная версия</td></tr>
+<tr><td>Интернет</td><td>Нужен для первой загрузки страницы и внешних библиотек (карта, UI)</td></tr>
+<tr><td>Где считается</td><td><strong>На компьютере пользователя</strong> — в браузере, файл <code>graph_core.js</code></td></tr>
+<tr><td>Логин / пароль</td><td>Не требуется</td></tr>
+</table>
+<p>Расчёты <strong>не</strong> идут на нашем сервере. Мощность ПК пользователя влияет на скорость (особенно при 300–1000 узлах и большом числе прогонов War-Gaming).</p>
+<hr>
+<h3>Рекомендуемый маршрут (~7 минут)</h3>
+<table>
+<tr><th>№</th><th>Открыть</th><th>Действие</th><th>Что должно получиться</th></tr>
+<tr><td>0</td><td><strong>/</strong> (index)</td><td>Выбрать карточку</td><td>Хаб: guided demo <strong>или</strong> куб 8 режимов</td></tr>
+<tr><td>1</td><td><strong>start.html</strong> (из хаба)</td><td>Прочитать 4 шага</td><td>Понятен сценарий просмотра и дисклеймер</td></tr>
+<tr><td>2</td><td>Кнопка <strong>«Демо: волна ударов»</strong></td><td>Ждать ~2–3 мин</td><td>Автодемо режима 8: TSO 750/330 (demo), 100 узлов</td></tr>
+<tr><td>3</td><td>Карта (режим 8)</td><td>Наблюдать</td><td>Кластеры узлов, топ risk-линии (не «паутина» из сотен линий)</td></tr>
+<tr><td>4</td><td>Правая панель</td><td>После автодемо</td><td>Таблица worst scenarios, <strong>Pareto-кривая</strong>, Protect top 3 на карте</td></tr>
+<tr><td>5</td><td><strong>roadmap.html</strong></td><td>Прочитать таблицу</td><td>Соответствие вашему ТЗ: что есть, что в следующих этапах</td></tr>
+<tr><td>6</td><td><strong>readme.html</strong></td><td>По желанию</td><td>Полное описание 8 режимов и ограничений</td></tr>
+</table>
+<p>Прямая ссылка на автодемо: <a href="https://jfeldman777.github.io/pilot/eng-large-map.html?demo=1" target="_blank" rel="noopener">https://jfeldman777.github.io/pilot/eng-large-map.html?demo=1</a>  </p>
+<p>Куб всех режимов: <a href="https://jfeldman777.github.io/pilot/home.html" target="_blank" rel="noopener">https://jfeldman777.github.io/pilot/home.html</a></p>
+<hr>
+<h3>Что в браузере работает (конкретные возможности)</h3>
+<table>
+<tr><th>Возможность</th><th>Где</th><th>Комментарий</th></tr>
+<tr><td><strong>Вход-хаб</strong></td><td>index (корень сайта)</td><td>Выбор: guided demo или куб</td></tr>
+<tr><td>8 режимов симулятора</td><td>home.html → режимы 1–8</td><td>Масштаб × схема/карта × screening/инженерная</td></tr>
+<tr><td><strong>Режим 8 — главный demo</strong></td><td>eng-large-map.html</td><td>Карта, War-Gaming, Pareto, TSO-пресет</td></tr>
+<tr><td>Генерация synthetic-сети</td><td>Все режимы</td><td>Seed воспроизводим</td></tr>
+<tr><td>DC power flow, loading %</td><td>Режимы 5–8</td><td>В браузере, упрощённый DC screening</td></tr>
+<tr><td>Top-10 risky objects</td><td>Режимы 5–8</td><td>Risk score, repair time — synthetic</td></tr>
+<tr><td>DC N-1</td><td>Режимы 5–8</td><td>Полный на малых сетях; <strong>выборочный (sampled)</strong> на 300/1000 узлах</td></tr>
+<tr><td>Каскад (trip по перегрузке)</td><td>Режимы 5–8</td><td>Упрощённая модель, timeline</td></tr>
+<tr><td><strong>War-Gaming</strong> (волны поражения)</td><td>Режим 8</td><td>До <strong>100–5000</strong> прогонов в браузере (зависит от ПК)</td></tr>
+<tr><td>Pareto: Protect top 1 / 3 / 5 + кривая</td><td>Режим 8</td><td>Screening-рекомендация «что укрепить первым»</td></tr>
+<tr><td>TSO 750/330 synthetic backbone</td><td>Режим 8, автодемо</td><td>Демо-топология, не реальная сеть Укрэнерго</td></tr>
+<tr><td>Бейджи OPEN_DATA / SYNTHETIC / DEMO</td><td>Режим 8</td><td>Происхождение данных в tooltip</td></tr>
+<tr><td>Копировать отчёт</td><td>Режим 8</td><td>Текстовая сводка в буфер</td></tr>
+<tr><td>Roadmap vs ТЗ</td><td>roadmap.html</td><td>Честная таблица соответствия</td></tr>
+<tr><td>Архитектура (документ)</td><td>architecture.html</td><td>Схема слоёв системы</td></tr>
+<tr><td><strong>Пример</strong> batch-отчёта</td><td>batch-results.html</td><td>Уже посчитанный <code>latest_summary.json</code> из репозитория</td></tr>
+</table>
+<hr>
+<h3>Чего в браузере <strong>нет</strong> (важно)</h3>
+<table>
+<tr><th>Не работает / не обещается</th><th>Почему</th></tr>
+<tr><td><strong>Живой API pandapower</strong></td><td>API — отдельный Python-сервис; на GitHub Pages сервер не запускается</td></tr>
+<tr><td><strong>api-demo.html → POST /dc-run</strong></td><td>Страница откроется, но запрос к API <strong>упадёт</strong>, если локально не запущен <code>uvicorn</code></td></tr>
+<tr><td><strong>Новый batch War-Gaming</strong></td><td>Нужен Node.js на машине, где запускают скрипт — не в браузере</td></tr>
+<tr><td><strong>PostgreSQL, Docker, калибровка</strong></td><td>Только при серверном развёртывании (часть 2)</td></tr>
+<tr><td>Реальная топология Укрэнерго</td><td>Synthetic demo; NDA-топология — этап 4</td></tr>
+<tr><td>AC / Newton-Raphson на полной сети</td><td>Нет в браузере</td></tr>
+<tr><td>Привязка к SCADA / EMS</td><td>Нет</td></tr>
+<tr><td>Миллионы прогонов Monte Carlo</td><td>В браузере — сотни–тысячи; промышленный объём — сервер + этап 4</td></tr>
+<tr><td>Агент 24/7, NL-запросы</td><td>Нет (design stub в документации)</td></tr>
+<tr><td>ML-корректор, автокалибровка</td><td>Нет</td></tr>
+<tr><td>Продукты A2, A3</td><td>Вне scope MVP</td></tr>
+<tr><td>Инженерное заключение</td><td>Screening-demo only</td></tr>
+</table>
+<p><strong>backend-demo.html</strong> на GitHub Pages — <strong>инструкция</strong> для серверного контура, а не кнопка «запустить backend».</p>
+<hr>
+<h3>Ограничения среды «компьютер заказчика»</h3>
+<p>- Для показа: пресет <strong>100 узлов</strong> и автодемо — стабильно на типичном ПК.</p>
+<p>- Пресет <strong>1000 узлов</strong> + тысячи прогонов может тормозить вкладку.</p>
+<p>- Мобильный браузер — не рекомендуется для режима 8.</p>
+<p>- Старая страница «Граф потоков» — <strong>Ctrl+Shift+R</strong> или инкогнито.</p>
+<hr>
+<h3>Итог части 1</h3>
+<p>В браузере <strong>полностью рабочий</strong> end-to-end сценарий:  </p>
+<p><strong>сеть на карте → сценарии поражения (War-Gaming) → слабые места → Pareto «что укрепить»</strong> — без установки ПО.</p>
+<p>Backend фазы 3 в браузерном контуре <strong>не участвует</strong> — только документация и пример batch-JSON.</p>
+<hr>
+<h2>Часть 2. Развёртывание на сервере (кратко)</h2>
+<p>Если есть сервер (у исполнителя или у заказчика) — можно поднять <strong>расширенный контур</strong> поверх того же UI.</p>
+<h3>Возможно на сервере сейчас</h3>
+<table>
+<tr><th>Что</th><th>Как</th><th>Результат</th></tr>
+<tr><td>Полный UI</td><td><code>python app.py</code> или Docker web :5001</td><td>Все 8 режимов по сети</td></tr>
+<tr><td>API pandapower DC</td><td><code>uvicorn api.main:app</code> или Docker api :8000</td><td><code>POST /dc-run</code>, до <strong>20 buses</strong></td></tr>
+<tr><td>Batch War-Gaming</td><td><code>node scripts/run_mc_batch.mjs 1000 42</code></td><td>CSV + JSON, до <strong>50 000</strong> прогонов</td></tr>
+<tr><td>Всё в Docker</td><td><code>cp .env.example .env</code> → <code>docker compose up --build</code></td><td>web + api + postgres</td></tr>
+<tr><td>Инструкции backend</td><td>backend-demo.html</td><td>API + batch</td></tr>
+</table>
+<h3>Невозможно / не входит в поставку</h3>
+<table>
+<tr><th>Что</th><th>Статус</th></tr>
+<tr><td>Запись прогонов в PostgreSQL</td><td>Контейнер есть, <strong>код не пишет в БД</strong></td></tr>
+<tr><td>Распределённые workers, 10⁶+ прогонов</td><td>Этап 4</td></tr>
+<tr><td>Единый расчёт: режим 8 → pandapower API</td><td>Два контура, <strong>не связаны</strong></td></tr>
+<tr><td>AC на полной сети, топология NDA</td><td>Этап 4</td></tr>
+<tr><td>Калибровка sim vs observed</td><td>Только stub API</td></tr>
+<tr><td>Агент 24/7, SCADA</td><td>Этап 4+</td></tr>
+<tr><td>Боевой EMS</td><td>Не цель MVP</td></tr>
+</table>
+<h3>Минимальный план (без Docker)</h3>
+<p>1. <code>git clone</code> → <code>pip install flask</code> → <code>python app.py</code> (порт 5001)  </p>
+<p>2. Опционально: <code>uvicorn api.main:app --host 0.0.0.0 --port 8000</code>  </p>
+<p>3. Опционально: <code>node scripts/run_mc_batch.mjs 1000 42</code></p>
+<hr>
+<h2>Следующие шаги</h2>
+<p>1. <strong>Сейчас:</strong> <a href="https://jfeldman777.github.io/pilot/" target="_blank" rel="noopener">https://jfeldman777.github.io/pilot/</a> → guided demo или куб → roadmap.  </p>
+<p>2. <strong>On-premise:</strong> согласовать сервер и развернуть Docker или Python.  </p>
+<p>3. <strong>Дальше по ТЗ:</strong> топология NDA, batch → БД, workers, калибровка.</p>
+<p>Готов ответить на вопросы или провести walkthrough (~30 мин).</p>
+<p>С уважением,  </p>
+<p>*Яков*</p>
+    </div>
   </div>
-  <script>
-    fetch("CUSTOMER_LETTER.md")
-      .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
-      .then(md => { document.getElementById("content").innerHTML = marked.parse(md); })
-      .catch(e => {
-        document.getElementById("content").innerHTML =
-          '<p class="err">Не удалось загрузить CUSTOMER_LETTER.md: ' + e.message + '</p>';
-      });
-  </script>
 </body>
 </html>
