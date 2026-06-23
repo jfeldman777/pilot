@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Large engineering geo — DC screening</title>
+  <title>Большая инженерная карта — DC screening</title>
   <link rel="stylesheet" href="home-nav.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
@@ -91,10 +91,10 @@
 <body>
   <a href="home.html" class="home-btn" title="Домой">⌂</a>
   <aside class="sidebar" id="app-sidebar">
-    <h1>Large engineering geo</h1>
+    <h1>DC power flow · большая карта</h1>
     <p id="sidebar-desc">Режим 8 из 8 · Инженерная · большой · карта</p>
     <div class="demo-disclaimer">
-      Large geo engineering screening. Open/derived/synthetic coordinates. Synthetic electrical parameters. Not an operational grid model.
+      Demonstration MVP. Synthetic/open-derived coordinates. Synthetic electrical parameters. Not an operational grid model. Not an engineering recommendation.
     </div>
     <div class="demo-path-hint">
       <b>Для показа (~1 мин)</b>
@@ -162,7 +162,7 @@
           <option value="top_risk" selected>Top risk (топ-10)</option>
           <option value="scenario">Сценарий (N-1 / каскад / MC)</option>
           <option value="active">Важные (с потоком)</option>
-          <option value="all">Все рёбра (debug)</option>
+          <option value="all">Все рёбра (детально, zoom≥9)</option>
         </select>
         <label style="margin-top:6px">Порог потока MW <input type="number" id="flow_threshold" value="1" min="0" style="width:60px"></label>
       </div>
