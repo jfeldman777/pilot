@@ -46,7 +46,7 @@
 
 ## Быстрый smoke-test (5 мин)
 
-1. `python app.py` → **start.html** → «Демо: волна ударов»
+1. `python app.py` → **index.html** → guided demo или куб → «Демо: волна ударов»
 2. Дождаться Pareto-кривой и подсветки top 3
 3. **roadmap.html** — таблица соответствия ТЗ
 4. Home → режим **1** → Сгенерировать — sanity check
@@ -68,8 +68,9 @@
 ## Ссылка для заказчика
 
 ```text
-Локально:  http://127.0.0.1:5001/start.html
-Деплой:    <ваш URL>/start.html
+Локально:  http://127.0.0.1:5001/
+Деплой:    <ваш URL>/
+Guided:    start.html · Куб: home.html
 Автодемо:  eng-large-map.html?demo=1
 README:    readme.html · roadmap.html · backend-demo.html
 ```

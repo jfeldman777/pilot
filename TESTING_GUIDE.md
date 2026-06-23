@@ -5,7 +5,7 @@
 ## Перед началом
 
 1. `pip install flask`
-2. `python app.py` → http://127.0.0.1:5001
+2. `python app.py` → http://127.0.0.1:5001/ (**index** → start или home с кубом)
 3. На каждом экране: **Ctrl+F5** (жёсткое обновление `graph_core.js`)
 4. Консоль браузера (F12) — без красных ошибок после smoke-test
 

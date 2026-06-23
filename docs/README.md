@@ -49,7 +49,7 @@ pip install flask
 python app.py
 ```
 
-Откроется http://127.0.0.1:5001 — **начните с [start.html](http://127.0.0.1:5001/start.html)** (самостоятельный просмотр ~7 мин).
+Откроется http://127.0.0.1:5001 — **вход:** [index.html](http://127.0.0.1:5001/) (куб или guided demo · [start.html](http://127.0.0.1:5001/start.html)).
 
 Документация: [readme.html](http://127.0.0.1:5001/readme.html) · [roadmap.html](http://127.0.0.1:5001/roadmap.html) · [backend-demo.html](http://127.0.0.1:5001/backend-demo.html) (фаза 3).
 

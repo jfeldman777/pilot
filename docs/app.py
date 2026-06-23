@@ -12,8 +12,8 @@ app = Flask(__name__)
 
 
 @app.get("/")
-def home():
-    return send_from_directory(ROOT, "home.html")
+def index_root():
+    return send_from_directory(ROOT, "index.html")
 
 
 @app.get("/index.html")
@@ -102,14 +102,15 @@ def static_files(path):
 
 
 def open_browser(port=5001):
-    webbrowser.open(f"http://127.0.0.1:{port}/start.html")
+    webbrowser.open(f"http://127.0.0.1:{port}/")
 
 
 if __name__ == "__main__":
     port = 5001
     host = os.environ.get("HOST", "127.0.0.1")
     if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
-        print(f"Откройте: http://127.0.0.1:{port}/start.html")
+        print(f"Откройте: http://127.0.0.1:{port}/")
+        print(f"  или:   http://127.0.0.1:{port}/start.html  (guided demo)")
         print(f"API v2:  http://127.0.0.1:8000/docs  (uvicorn api.main:app --port 8000)")
         Timer(1.0, lambda: open_browser(port)).start()
     app.run(debug=True, use_reloader=False, port=port, host=host)
