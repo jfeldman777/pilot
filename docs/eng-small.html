@@ -359,6 +359,9 @@
     .filter-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
     .filter-row .field { margin-bottom: 0; }
     .filter-check { font-size: 12px; display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .cascade-timeline { list-style: none; font-size: 11px; max-height: 200px; overflow-y: auto; line-height: 1.45; }
+    .cascade-timeline li { padding: 5px 0; border-bottom: 1px solid #eee; }
+    .cascade-metrics { font-size: 11px; line-height: 1.55; color: #333; background: #fff8e1; border: 1px solid #ffe082; border-radius: 6px; padding: 8px 10px; }
 
     .flows-list li {
       font-family: "Consolas", "Courier New", monospace;
@@ -405,7 +408,8 @@
     <p id="sidebar-desc">Режим 5 из 8 · Инженерная · малый · схема</p>
     <div class="banner" style="margin:0 16px 10px;padding:8px 10px;background:#e8eaf6;border:1px solid #9fa8da;border-radius:6px;font-size:10px;line-height:1.4;color:#283593">
       Engineering preview: DC power flow screening. Synthetic parameters. Not an operational grid model.<br>
-      Engineering attributes are synthetic. Risk score is a simplified screening metric, not an operational assessment.
+      Engineering attributes are synthetic. Risk score is a simplified screening metric, not an operational assessment.<br>
+      Cascade model is a simplified DC screening model. Not an operational protection model.
     </div>
     <div class="sidebar-mode-tabs">
       <button type="button" id="mode-gen-btn" class="mode-tab active">Генерация</button>
@@ -500,6 +504,23 @@
           </div>
         </div>
         <label class="filter-check"><input type="checkbox" id="filter-top-risk"> Только top risk (топ-10)</label>
+
+        <div class="field" style="margin-top:16px;padding-top:12px;border-top:1px solid #eee">
+          <label style="font-size:13px;font-weight:700">Каскад</label>
+        </div>
+        <div class="weakest-hint" id="cascade-outage-hint">Стартовый отказ: кликните узел или линию на схеме</div>
+        <div class="field-row">
+          <div class="field">
+            <label for="cascade-threshold">Trip threshold, %</label>
+            <input type="number" id="cascade-threshold" value="120" min="100" max="300" step="5">
+          </div>
+          <div class="field">
+            <label for="cascade-max-steps">Max steps</label>
+            <input type="number" id="cascade-max-steps" value="10" min="1" max="30">
+          </div>
+        </div>
+        <button type="button" id="cascade-run-btn" class="secondary" disabled>Запустить каскад</button>
+        <button type="button" id="cascade-reset-btn" class="secondary" disabled>Сбросить каскад</button>
       </form>
     </div>
 
@@ -554,6 +575,9 @@
         <div class="legend-item"><span class="dot dot-failed">A</span> Не обеспечена (мигает, буква цветом типа)</div>
         <div class="legend-item"><span class="dot" style="background:#F44336;border:3px solid #FF9800"></span> Critical consumer</div>
         <div class="legend-item"><span class="dot" style="background:#c62828"></span> Capacity violation</div>
+        <div class="legend-item"><span style="display:inline-block;width:22px;height:0;border-top:4px solid #000;vertical-align:middle"></span> Initial outage</div>
+        <div class="legend-item"><span style="display:inline-block;width:22px;height:0;border-top:3px solid #FF9800;vertical-align:middle"></span> Overload before trip</div>
+        <div class="legend-item"><span style="display:inline-block;width:22px;height:0;border-top:2px dashed #9e9e9e;vertical-align:middle"></span> Cascade-tripped</div>
       </div>
     </div>
     <div class="checks" id="checks"></div>
@@ -587,6 +611,11 @@
           <tbody id="risk-table-body"><tr><td colspan="6">Сгенерируйте граф</td></tr></tbody>
         </table>
       </div>
+    </div>
+    <div class="panel-section">
+      <h3>Каскад · timeline</h3>
+      <ul class="cascade-timeline" id="cascade-timeline"><li>Запустите каскад</li></ul>
+      <div class="cascade-metrics" id="cascade-metrics" style="margin-top:8px">—</div>
     </div>
     <div class="panel-section">
       <h3>Отключены кликом <span class="count" id="manual-count">0</span></h3>
@@ -649,6 +678,13 @@
     const filterVoltageEl = document.getElementById("filter-voltage");
     const filterTypeEl = document.getElementById("filter-type");
     const filterTopRiskEl = document.getElementById("filter-top-risk");
+    const cascadeOutageHint = document.getElementById("cascade-outage-hint");
+    const cascadeThresholdEl = document.getElementById("cascade-threshold");
+    const cascadeMaxStepsEl = document.getElementById("cascade-max-steps");
+    const cascadeRunBtn = document.getElementById("cascade-run-btn");
+    const cascadeResetBtn = document.getElementById("cascade-reset-btn");
+    const cascadeTimeline = document.getElementById("cascade-timeline");
+    const cascadeMetrics = document.getElementById("cascade-metrics");
 
     let network = null;
     let nodesDataset = null;
@@ -1024,6 +1060,62 @@
 
     let lastFullData = null;
     let selectedObject = null;
+    let cascadeInitialOutage = null;
+    let preCascadeSnapshot = null;
+    let cascadeActive = false;
+
+    function updateCascadeOutageHint() {
+      if (!cascadeOutageHint) return;
+      if (!cascadeInitialOutage) {
+        cascadeOutageHint.textContent = "Стартовый отказ: кликните узел или линию на схеме";
+        cascadeOutageHint.className = "weakest-hint";
+        if (cascadeRunBtn) cascadeRunBtn.disabled = !graphState;
+        return;
+      }
+      const label = cascadeInitialOutage.label || cascadeInitialOutage.kind;
+      cascadeOutageHint.textContent = `Стартовый отказ: ${cascadeInitialOutage.kind} · ${label}`;
+      cascadeOutageHint.className = "weakest-hint active";
+      if (cascadeRunBtn) cascadeRunBtn.disabled = !graphState;
+    }
+
+    function savePreCascadeSnapshot() {
+      if (!lastFullData || preCascadeSnapshot) return;
+      preCascadeSnapshot = {
+        data: JSON.parse(JSON.stringify(lastFullData)),
+        disabledSet: new Set(disabledSet),
+        disabledEdgesSet: new Set(disabledEdgesSet),
+        graphState: graphState,
+      };
+      if (cascadeResetBtn) cascadeResetBtn.disabled = false;
+    }
+
+    function renderCascadePanel(data) {
+      const tl = data?.dc_cascade?.timeline || [];
+      if (!cascadeTimeline) return;
+      if (!tl.length) {
+        cascadeTimeline.innerHTML = "<li>Запустите каскад</li>";
+      } else {
+        cascadeTimeline.innerHTML = tl.map(t => `<li><b>Step ${t.step}:</b> ${t.message}</li>`).join("");
+      }
+      const m = data?.dc_cascade?.metrics;
+      if (!cascadeMetrics) return;
+      if (!m) {
+        cascadeMetrics.textContent = "—";
+        return;
+      }
+      cascadeMetrics.innerHTML = [
+        `cascade_steps: <b>${m.cascade_steps}</b>`,
+        `initial_outage: <b>${m.initial_outage}</b>`,
+        `failed_assets: <b>${m.failed_assets_count}</b>`,
+        `failed_edges: <b>${m.failed_edges?.length ?? 0}</b>`,
+        `failed_nodes: <b>${m.failed_nodes?.length ?? 0}</b>`,
+        `max_loading: <b>${m.max_loading_percent}%</b>`,
+        `unserved_load: <b>${m.unserved_load_mw} MW</b>`,
+        `critical_unserved: <b>${m.critical_unserved_count}</b>`,
+        `dc_solved_final: <b>${m.dc_solved_final ? "yes" : "no"}</b>`,
+        `stable: <b>${m.stable ? "yes" : "no"}</b>`,
+      ].join("<br>");
+    }
 
     function renderNodeDetail(node) {
       selectedObject = { kind: "node", id: nodeId(node.id) };
@@ -1151,7 +1243,12 @@
       if (now - lastToggleAt < 350) return;
       if (params.edges && params.edges.length) {
         const e = edgesDataset.get(params.edges[0]);
-        if (e) renderEdgeDetail(e);
+        if (e) {
+          renderEdgeDetail(e);
+          const [u, v] = String(e.id).split("-").map(Number);
+          cascadeInitialOutage = { kind: "edge", edgeKey: edgeKey(u, v), label: e.label || `${u}-${v}` };
+          updateCascadeOutageHint();
+        }
         lastToggleAt = now;
         toggleEdge(params.edges[0]);
         return;
@@ -1159,7 +1256,11 @@
       const id = nodeAtPointer(params);
       if (id !== null) {
         const n = nodesDataset.get(id);
-        if (n) renderNodeDetail(n);
+        if (n) {
+          renderNodeDetail(n);
+          cascadeInitialOutage = { kind: "node", id, label: nodeLetter(n) };
+          updateCascadeOutageHint();
+        }
         lastToggleAt = now;
         toggleNode(id);
       }
@@ -1355,7 +1456,7 @@
         try {
           await new Promise((resolve, reject) => {
             const s = document.createElement("script");
-            s.src = path + "?v=12";
+            s.src = path + "?v=13";
             s.onload = resolve;
             s.onerror = reject;
             document.head.appendChild(s);
@@ -1460,6 +1561,8 @@
 
     if (flowModeEl) flowModeEl.addEventListener("change", () => graphState && rebalance());
     if (dcN1Btn) dcN1Btn.addEventListener("click", showDcN1);
+    if (cascadeRunBtn) cascadeRunBtn.addEventListener("click", runCascade);
+    if (cascadeResetBtn) cascadeResetBtn.addEventListener("click", resetCascade);
     function onFilterChange() {
       if (!lastFullData || !network) return;
       applyGraphUpdate(lastFullData);
@@ -1516,6 +1619,10 @@
     }
 
     function applyResult(data) {
+      if (!cascadeActive) {
+        preCascadeSnapshot = null;
+        if (cascadeResetBtn) cascadeResetBtn.disabled = true;
+      }
       lastFullData = data;
       graphState = data.state;
       disabledSet = new Set((data.disabled || []).map(nodeId));
@@ -1531,6 +1638,7 @@
       summaryEl.textContent = formatSummary(data.summary);
       renderPanel(data);
       renderRiskTable(data);
+      renderCascadePanel(cascadeActive ? data : null);
       startBlink();
       if (data.weakest) updateWeakestHint(data.weakest);
       if (data.weakest_edge) updateWeakestEdgeHint(data.weakest_edge);
@@ -1549,15 +1657,79 @@
       reinforceBtn.disabled = false;
       capacityReinforceBtn.disabled = false;
       if (dcN1Btn) dcN1Btn.disabled = false;
+      if (cascadeRunBtn && !cascadeActive) cascadeRunBtn.disabled = !graphState || !cascadeInitialOutage;
+    }
+
+    function applyCascadeResult(data) {
+      cascadeActive = true;
+      lastFullData = data;
+      applyGraphUpdate(data, {});
+      renderChecks(data.checks);
+      summaryEl.textContent = formatSummary(data.summary) + (data.dc_cascade?.metrics?.initial_outage ? ` · cascade: ${data.dc_cascade.metrics.initial_outage}` : "");
+      renderPanel(data);
+      renderRiskTable(data);
+      renderCascadePanel(data);
+      updateDcSummary(data);
+      startBlink();
+      if (cascadeResetBtn) cascadeResetBtn.disabled = !preCascadeSnapshot;
+      if (cascadeRunBtn) cascadeRunBtn.disabled = true;
+    }
+
+    function resetCascade() {
+      if (!preCascadeSnapshot) return;
+      showError("");
+      cascadeActive = false;
+      const snap = preCascadeSnapshot;
+      preCascadeSnapshot = null;
+      applyResult(snap.data);
+      graphState = snap.graphState;
+      disabledSet = new Set(snap.disabledSet);
+      disabledEdgesSet = new Set(snap.disabledEdgesSet);
+      if (cascadeResetBtn) cascadeResetBtn.disabled = true;
+      updateCascadeOutageHint();
+    }
+
+    async function runCascade() {
+      if (!graphState || !cascadeInitialOutage) {
+        showError("Выберите стартовый отказ: кликните узел или линию");
+        return;
+      }
+      showError("");
+      savePreCascadeSnapshot();
+      cascadeRunBtn.disabled = true;
+      cascadeRunBtn.textContent = "Каскад…";
+      try {
+        requireGraphCore();
+        const data = GraphCore.runDCCascade(
+          stateWithDisables(),
+          [...disabledSet],
+          getPositions(),
+          { flowMode: "dc" },
+          {
+            initialOutage: cascadeInitialOutage,
+            tripThreshold: +(cascadeThresholdEl?.value || 120),
+            maxSteps: +(cascadeMaxStepsEl?.value || 10),
+          }
+        );
+        applyCascadeResult(data);
+      } catch (e) {
+        showError(e.message || "Ошибка каскада");
+      } finally {
+        cascadeRunBtn.disabled = cascadeActive;
+        cascadeRunBtn.textContent = "Запустить каскад";
+      }
     }
 
     function applyGraphData(data, resetDisabled) {
       lastFullData = data;
       graphState = data.state;
+      cascadeActive = false;
+      preCascadeSnapshot = null;
       if (resetDisabled) {
         disabledSet = new Set();
         disabledEdgesSet = new Set();
         nodeRoleColors = new Map();
+        cascadeInitialOutage = null;
       }
 
       if (network) {
@@ -1579,6 +1751,10 @@
       updateDcSummary(data);
       renderPanel(data);
       renderRiskTable(data);
+      renderCascadePanel(null);
+      updateCascadeOutageHint();
+      if (cascadeResetBtn) cascadeResetBtn.disabled = true;
+      if (cascadeRunBtn) cascadeRunBtn.disabled = !cascadeInitialOutage;
       startBlink();
       weakestBtn.disabled = false;
       weakestEdgeBtn.disabled = false;

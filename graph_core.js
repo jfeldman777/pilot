@@ -3340,7 +3340,7 @@
     }
     enrichEngineeringVisObjects(
       base, G, state, roles, production, consumption, mathFlow, dcFlow, dcResult, flowMode,
-      edgeCapacity, reactance, engOpts.riskByNode, engOpts.riskByEdge
+      edgeCapacity, reactance, engOpts
     );
     for (const edge of base.edges) {
       const [u, v] = String(edge.id).split("-").map(Number);
@@ -3356,7 +3356,63 @@
     return base;
   }
 
-  function enrichEngineeringVisObjects(base, G, state, roles, production, consumption, mathFlow, dcFlow, dcResult, flowMode, edgeCapacity, reactance, riskByNode, riskByEdge) {
+  function applyCascadeVisStyles(base, engOpts) {
+    const c = engOpts?.cascade;
+    if (!c) return;
+    const initialEdge = c.initialOutageEdge;
+    const initialNode = c.initialOutageNode;
+    const tripped = new Set(c.cascadeTrippedEdges || []);
+
+    for (const node of base.nodes) {
+      const v = node.id;
+      if (initialNode != null && v === initialNode) {
+        node.cascade_initial_outage = true;
+        node.borderWidth = 5;
+        node.color = {
+          background: "#000000",
+          border: "#000000",
+          highlight: { background: "#333333", border: "#333333" },
+        };
+      }
+      if (node.is_critical && node.disabled_failed) {
+        node.cascade_critical_unserved = true;
+        node.borderWidth = 5;
+        node.color = {
+          background: COLOR.consumer,
+          border: "#FF5722",
+          highlight: { background: COLOR.consumer, border: "#E64A19" },
+        };
+      }
+    }
+
+    for (const edge of base.edges) {
+      const [u, v] = String(edge.id).split("-").map(Number);
+      const ek = edgeKey(u, v);
+      if (initialEdge && ek === initialEdge) {
+        edge.cascade_initial_outage = true;
+        edge.color = { color: "#000000", highlight: "#333333" };
+        edge.width = 5;
+        edge.dashes = false;
+        continue;
+      }
+      if (tripped.has(ek)) {
+        edge.cascade_tripped = true;
+        edge.color = { color: "#9e9e9e", highlight: "#757575" };
+        edge.width = 2;
+        edge.dashes = [6, 8];
+        continue;
+      }
+      if (!edge.disabled_manual_edge && (edge.dc_loading_percent > (c.tripThreshold || 100) || edge.capacity_violation)) {
+        edge.cascade_overload = true;
+        edge.color = { color: "#FF9800", highlight: "#F57C00" };
+        edge.width = 4;
+      }
+    }
+  }
+
+  function enrichEngineeringVisObjects(base, G, state, roles, production, consumption, mathFlow, dcFlow, dcResult, flowMode, edgeCapacity, reactance, engOpts = {}) {
+    const riskByNode = engOpts.riskByNode;
+    const riskByEdge = engOpts.riskByEdge;
     const kv = state.voltage_level_kv || {};
     const theta = dcResult.theta || {};
     for (const node of base.nodes) {
@@ -3437,6 +3493,7 @@
         }
       }
     }
+    applyCascadeVisStyles(base, engOpts);
     return base;
   }
 
@@ -3458,7 +3515,7 @@
     if (!positions) spreadVisNodes(base.nodes);
     return enrichEngineeringVisObjects(
       base, G, state, roles, production, consumption, mathFlow, dcFlow, dcResult, flowMode,
-      edgeCapacity, reactance, engOpts.riskByNode, engOpts.riskByEdge
+      edgeCapacity, reactance, engOpts
     );
   }
 
@@ -3469,6 +3526,9 @@
     initEngineeringState(state, seed);
     const flowMode = engOpts.flowMode || "dc";
     const disabledEdges = edgeKeySet(state.disabled_edges);
+    if (engOpts.cascadeDisabledEdgeSet) {
+      for (const ek of engOpts.cascadeDisabledEdgeSet) disabledEdges.add(ek);
+    }
     const { edgeFlow: mathFlow, surplus, failed, served } = computeFlowsFromState(G, state, disabled, disabledEdges);
     const mathFeas = analyzeFeasibility(G, state, mathFlow, failed, served, state.edge_capacity, state.priority);
     const dcResult = solveDCPowerFlow(G, state, disabled, disabledEdges);
@@ -3559,6 +3619,158 @@
       top_risk_objects: riskObjects.slice(0, 10),
       risk_disclaimer: "Engineering attributes are synthetic. Risk score is a simplified screening metric (redundancy ≈ 1/degree), not an operational assessment.",
     };
+  }
+
+  function runDCCascade(stateJson, baseDisabledList = [], positions = null, engOpts = {}, cascadeOpts = {}) {
+    const tripThreshold = +cascadeOpts.tripThreshold || 120;
+    const maxSteps = +cascadeOpts.maxSteps || 10;
+    const initialOutage = cascadeOpts.initialOutage;
+    if (!initialOutage || !initialOutage.kind) {
+      throw new Error("Выберите стартовый отказ: кликните узел или линию на схеме");
+    }
+
+    const state = stateFromJson(stateJson);
+    initEngineeringState(state, state.params.seed);
+    const G = stateToGraph(state);
+    const n = G.n;
+    const baseDisabled = new Set(baseDisabledList.map(Number));
+    const userDisabledEdges = edgeKeySet(state.disabled_edges);
+    const cascadeEdgeOff = new Set();
+    const cascadeTrippedOnly = new Set();
+    const workingDisabled = new Set(baseDisabled);
+
+    let initialLabel = "";
+    if (initialOutage.kind === "node") {
+      workingDisabled.add(+initialOutage.id);
+      initialLabel = `${nodeName(initialOutage.id, n)} (#${initialOutage.id})`;
+    } else {
+      const ek = initialOutage.edgeKey || initialOutage.key;
+      cascadeEdgeOff.add(ek);
+      const [u, v] = ek.split(",").map(Number);
+      initialLabel = `${nodeName(u, n)}-${nodeName(v, n)}`;
+    }
+
+    const timeline = [{ step: 0, message: `initial outage ${initialLabel}` }];
+    let iteration = 0;
+    let stable = false;
+    let dcSolvedFinal = false;
+    let stopReason = "unknown";
+    let lastDcFeas = { max_loading_percent: 0, capacity_violations_count: 0 };
+
+    while (true) {
+      const allOffEdges = new Set(userDisabledEdges);
+      for (const ek of cascadeEdgeOff) allOffEdges.add(ek);
+
+      const dcResult = solveDCPowerFlow(G, state, workingDisabled, allOffEdges);
+
+      if (!dcResult.solved) {
+        timeline.push({ step: iteration + 1, message: "DC solve failed — cascade stopped", dc_solved: false });
+        stopReason = "dc_failed";
+        break;
+      }
+      dcSolvedFinal = true;
+      lastDcFeas = analyzeDCFeasibility(G, dcResult.dcFlow || {}, state.edge_capacity, workingDisabled, allOffEdges);
+
+      const overloads = [];
+      const dcFlow = dcResult.dcFlow || {};
+      for (const [u, v] of G.edges) {
+        const ek = edgeKey(u, v);
+        if (workingDisabled.has(u) || workingDisabled.has(v) || allOffEdges.has(ek)) continue;
+        const cap = getEdgeCapacityMw(state.edge_capacity, u, v);
+        const f = dcFlow[ek] || 0;
+        const loading = cap > 0 ? (Math.abs(f) / cap) * 100 : 0;
+        if (loading > tripThreshold + 1e-6) {
+          overloads.push({
+            edgeKey: ek,
+            u,
+            v,
+            loading_percent: Math.round(loading * 10) / 10,
+            label: `${nodeName(u, n)}-${nodeName(v, n)}`,
+          });
+        }
+      }
+
+      const ovText = overloads.length
+        ? overloads.map(o => `${o.label} ${o.loading_percent}%`).join(", ")
+        : "none";
+      timeline.push({
+        step: iteration + 1,
+        message: `DC solved, overloads: ${ovText}`,
+        overloads: overloads.map(o => ({ ...o })),
+        dc_solved: true,
+      });
+
+      if (!overloads.length) {
+        stable = true;
+        timeline.push({ step: iteration + 1, message: "stable, no overloads" });
+        stopReason = "stable";
+        break;
+      }
+
+      if (iteration >= maxSteps) {
+        timeline.push({ step: iteration + 1, message: `max_steps (${maxSteps}) reached` });
+        stopReason = "max_steps";
+        break;
+      }
+
+      const tripped = overloads.map(o => {
+        cascadeEdgeOff.add(o.edgeKey);
+        cascadeTrippedOnly.add(o.edgeKey);
+        return o.label;
+      });
+      timeline.push({ step: iteration + 1, message: `tripped ${tripped.join(", ")}`, tripped });
+      iteration++;
+    }
+
+    const finalOffEdges = new Set(userDisabledEdges);
+    for (const ek of cascadeEdgeOff) finalOffEdges.add(ek);
+    const { failed, served } = computeFlowsFromState(G, state, workingDisabled, finalOffEdges);
+    const { served: baseServed } = computeFlowsFromState(G, state, baseDisabled, userDisabledEdges);
+    const unservedMw = lostLoadMw(state, G, served, baseServed, workingDisabled);
+
+    let criticalUnserved = 0;
+    for (const v of G.nodes()) {
+      if (state.roles[v] !== "consumer" || workingDisabled.has(v) || failed.has(v)) continue;
+      if ((state.priority[v] || "") === "critical" && (served[v] || 0) < (state.consumption[v] || 0) - 1e-6) {
+        criticalUnserved++;
+      }
+    }
+
+    const cascadeVis = {
+      initialOutageEdge: initialOutage.kind === "edge" ? (initialOutage.edgeKey || initialOutage.key) : null,
+      initialOutageNode: initialOutage.kind === "node" ? +initialOutage.id : null,
+      cascadeTrippedEdges: [...cascadeTrippedOnly],
+      tripThreshold,
+    };
+
+    const result = evaluateStateEngineering(state, workingDisabled, positions, {
+      ...engOpts,
+      flowMode: "dc",
+      cascade: cascadeVis,
+      cascadeDisabledEdgeSet: cascadeEdgeOff,
+    });
+
+    result.dc_cascade = {
+      timeline,
+      metrics: {
+        cascade_steps: iteration,
+        initial_outage: initialLabel,
+        failed_assets_count: workingDisabled.size + cascadeEdgeOff.size,
+        failed_edges: [...cascadeEdgeOff],
+        failed_nodes: [...workingDisabled].sort((a, b) => a - b),
+        max_loading_percent: lastDcFeas.max_loading_percent,
+        unserved_load_mw: unservedMw,
+        critical_unserved_count: criticalUnserved,
+        dc_solved_final: dcSolvedFinal,
+        stable,
+        stop_reason: stopReason,
+        trip_threshold: tripThreshold,
+      },
+      cascade_active: true,
+    };
+    result.cascade_disclaimer =
+      "Cascade model is a simplified DC screening model. Synthetic parameters. Not an operational protection model.";
+    return result;
   }
 
   function generateEngineeringGeo(pool, opts = {}) {
@@ -3774,6 +3986,7 @@
     dcN1Analysis,
     scanDcN1Scenarios,
     applyDcN1Scenario,
+    runDCCascade,
     initEngineeringState,
   };
 })(typeof window !== "undefined" ? window : globalThis);
