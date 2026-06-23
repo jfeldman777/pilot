@@ -3570,6 +3570,90 @@
     return base;
   }
 
+  function buildEngineeringLargeMapVisData(G, state, mathFlow, surplus, failed, served, dcResult, flowMode, disabled, disabledEdges, geo, positions, seed, engOpts = {}) {
+    const roles = state.roles;
+    const production = state.production;
+    const consumption = state.consumption;
+    const edgeCapacity = state.edge_capacity || {};
+    const reactance = state.edge_reactance || {};
+    const priorities = state.priority || {};
+    const reinforcedSet = new Set((state.reinforced_edges || []).map(k => (typeof k === "string" ? k : edgeKey(k[0], k[1]))));
+    const newSet = new Set((state.new_edges || []).map(k => (typeof k === "string" ? k : edgeKey(k[0], k[1]))));
+    const dcFlow = dcResult.dcFlow || {};
+    const displayFlow = flowMode === "dc" ? dcFlow : mathFlow;
+    const renderOpts = engOpts.renderOpts || defaultRenderOpts(G.n);
+    const n1Outage = engOpts.n1OutageEdge || null;
+
+    const base = buildLargeMapVisData(
+      G, roles, production, consumption, displayFlow, surplus, seed,
+      disabled, failed, geo, positions, disabledEdges, renderOpts,
+      edgeCapacity, priorities, reinforcedSet, newSet, served
+    );
+    if (!positions) spreadGeoNodeDisplays(base.nodes, seed);
+    enrichEngineeringVisObjects(
+      base, G, state, roles, production, consumption, mathFlow, dcFlow, dcResult, flowMode,
+      edgeCapacity, reactance, { ...engOpts, largeSchematic: true }
+    );
+    for (const edge of base.edges) {
+      const [u, v] = String(edge.id).split("-").map(Number);
+      const ek = edgeKey(u, v);
+      edge.n1_outage = n1Outage === ek;
+      const df = dcFlow[ek] || 0;
+      const cap = getEdgeCapacityMw(edgeCapacity, u, v);
+      edge.dc_violation = !edge.disabled_manual_edge && Math.abs(df) > cap + 1e-6;
+      edge.dc_loading_percent = cap > 0 ? Math.round((Math.abs(df) / cap) * 1000) / 10 : 0;
+      edge.label = "";
+    }
+    if (renderOpts.uiEdgeMode === "top_risk" && engOpts.riskByEdge?.size) {
+      const topList = [...engOpts.riskByEdge.values()]
+        .sort((a, b) => b.risk_score - a.risk_score)
+        .slice(0, 10);
+      const topKeys = new Set(topList.map(o => o.edgeKey));
+      const inactive = new Set([...disabled, ...failed]);
+      const byKey = new Map();
+      for (const edge of base.edges) {
+        const [u, v] = String(edge.id).split("-").map(Number);
+        const ek = edgeKey(u, v);
+        if (topKeys.has(ek)) byKey.set(ek, edge);
+      }
+      for (const ro of topList) {
+        if (byKey.has(ro.edgeKey)) continue;
+        const [u, v] = ro.edgeKey.split(",").map(Number);
+        const ek = ro.edgeKey;
+        const edgeOff = disabledEdges.has(ek);
+        const offEdge = inactive.has(u) || inactive.has(v) || edgeOff;
+        const f = offEdge ? 0 : displayFlow[ek] || 0;
+        const cap = getEdgeCapacityMw(edgeCapacity, u, v);
+        const violation = !offEdge && Math.abs(f) > cap + 1e-6;
+        const [frm, to] = edgeDirection(u, v, f);
+        byKey.set(ek, {
+          id: `${u}-${v}`,
+          from: frm,
+          to,
+          label: "",
+          disabled_manual_edge: edgeOff,
+          _flow: Math.abs(f),
+          capacity_violation: violation,
+          capacity_mw: cap,
+          flow_mw: f,
+          loading_percent: cap > 0 ? Math.round((Math.abs(f) / cap) * 1000) / 10 : 0,
+          reinforced_edge: reinforcedSet.has(ek),
+          new_edge: newSet.has(ek),
+          n1_outage: n1Outage === ek,
+          dc_violation: violation,
+          dc_loading_percent: cap > 0 ? Math.round((Math.abs(f) / cap) * 1000) / 10 : 0,
+          risk_score: ro.risk_score,
+          edge_type: state.edge_types?.[ek] || "line",
+          voltage_level_kv: ro.voltage_kv,
+          repair_time_days: ro.repair_time_days,
+        });
+      }
+      base.edges = [...byKey.values()];
+    }
+    applyCascadeVisStyles(base, engOpts);
+    return base;
+  }
+
   function buildEngineeringLargeVisData(G, state, mathFlow, surplus, failed, served, dcResult, flowMode, disabled, disabledEdges, positions, seed, engOpts = {}) {
     const dcFlow = dcResult.dcFlow || {};
     const displayFlow = flowMode === "dc" ? dcFlow : mathFlow;
@@ -3640,13 +3724,19 @@
     }
     const visEngOpts = { ...engOpts, riskByNode, riskByEdge };
     const isGeo = isEngineeringGeoState(state);
+    const isLargeGeo = isGeo && (params.n_vertices > 50 || params.mode === "engineering_large_map" || params.scale === "large");
     const isLargeSchematic = !isGeo && (params.n_vertices > LETTERS.length || params.mode === "engineering_large");
     const largeRenderOpts = engOpts.renderOpts || defaultRenderOpts(params.n_vertices);
     const { nodes, edges } = isGeo
-      ? buildEngineeringMapVisData(
-        G, state, mathFlow, surplus, failed, served, dcResult, flowMode,
-        disabled, disabledEdges, state.geo, positions, seed, visEngOpts
-      )
+      ? isLargeGeo
+        ? buildEngineeringLargeMapVisData(
+          G, state, mathFlow, surplus, failed, served, dcResult, flowMode,
+          disabled, disabledEdges, state.geo, positions, seed, { ...visEngOpts, renderOpts: largeRenderOpts }
+        )
+        : buildEngineeringMapVisData(
+          G, state, mathFlow, surplus, failed, served, dcResult, flowMode,
+          disabled, disabledEdges, state.geo, positions, seed, visEngOpts
+        )
       : isLargeSchematic
         ? buildEngineeringLargeVisData(
           G, state, mathFlow, surplus, failed, served, dcResult, flowMode,
@@ -4193,6 +4283,77 @@
     return result;
   }
 
+  function generateEngineeringLargeGeo(pool, opts = {}) {
+    const count = +opts.count || 300;
+    const seed = +opts.seed || 42;
+    if (count < 30) throw new Error("Минимум 30 станций для large engineering geo");
+    if (count > MAX_LARGE_VERTICES) throw new Error(`Максимум ${MAX_LARGE_VERTICES} станций`);
+    const { stations, passport: geoPassport } = deriveGeoPool(pool, count, seed);
+    const third = Math.floor(count / 3);
+    const rem = count - third * 3;
+    const nGen = third + (rem > 0 ? 1 : 0);
+    const nCons = third + (rem > 1 ? 1 : 0);
+    const nTransit = count - nGen - nCons;
+    const roles = assignRoles(count, nGen, nCons, seed);
+    const geo = {};
+    stations.forEach((s, i) => {
+      geo[String(i)] = {
+        lat: s.lat,
+        lon: s.lon,
+        name: s.name || `СЕС ${i}`,
+        oblast: s.oblast || "",
+        station_id: s.station_id || `ses-${i}`,
+        coord_source: s.coord_source,
+        synthetic: s.synthetic,
+      };
+    });
+    const G = generateGeoGraph(count, roles, geo, seed);
+    const rng = new Random(seed);
+    const generators = G.nodes().filter(v => roles[v] === "generator");
+    const consumers = G.nodes().filter(v => roles[v] === "consumer");
+    const totalProd = generators.length * Math.max(8, Math.round(20 + count / 80));
+    const totalCons = Math.min(consumers.length * Math.max(4, Math.round(10 + count / 120)), Math.floor(totalProd * 0.82));
+    const productionList = splitTotal(totalProd, generators.length, rng);
+    const consumptionList = splitTotal(Math.max(consumers.length, totalCons), consumers.length, rng);
+    const production = {};
+    const consumption = {};
+    generators.forEach((v, i) => (production[v] = productionList[i]));
+    consumers.forEach((v, i) => (consumption[v] = consumptionList[i]));
+    const params = {
+      n_vertices: count,
+      n_generators: nGen,
+      n_consumers: nCons,
+      n_transit: nTransit,
+      total_production: totalProd,
+      total_consumption: Math.max(consumers.length, totalCons),
+      min_degree: 1,
+      max_degree: 10,
+      seed,
+      mode: "engineering_large_map",
+      scale: "large",
+      get total_surplus() {
+        return this.total_production - this.total_consumption;
+      },
+    };
+    const passport = {
+      ...geoPassport,
+      reactance: "SYNTHETIC",
+      model: "LARGE_GEO_DC_POWER_FLOW_SCREENING",
+    };
+    const state = {
+      params,
+      roles,
+      edges: G.edges.map(e => [...e]),
+      production,
+      consumption,
+      geo,
+      passport,
+    };
+    initEngineeringState(state, seed);
+    const renderOpts = opts.renderOpts || defaultRenderOpts(count);
+    return evaluateStateEngineering(state, new Set(), null, { ...opts, renderOpts });
+  }
+
   function generateEngineeringGeo(pool, opts = {}) {
     const count = +opts.count || 30;
     const seed = +opts.seed || 42;
@@ -4485,10 +4646,12 @@
     findWeakestEdgeLarge,
     generateEngineering,
     generateEngineeringLarge,
+    generateEngineeringLargeGeo,
     generateEngineeringGeo,
     rebalanceEngineering,
     rebalanceEngineeringLarge,
     buildEngineeringLargeVisData,
+    buildEngineeringLargeMapVisData,
     selectN1EdgeSample,
     evaluateStateEngineering,
     solveDCPowerFlow,

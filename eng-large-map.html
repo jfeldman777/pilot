@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Large engineering geo — DC screening</title>
+  <link rel="stylesheet" href="home-nav.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body { font-family: "Segoe UI", Arial, sans-serif; height: 100vh; display: flex; background: #f0f2f5; color: #222; overflow: hidden; }
+    .sidebar { width: 310px; min-width: 310px; background: #fff; border-right: 1px solid #ddd; overflow-y: auto; z-index: 1000; display: flex; flex-direction: column; }
+    .sidebar h1 { font-size: 16px; padding: 12px 14px 4px; color: #283593; }
+    .sidebar p { font-size: 12px; color: #666; padding: 0 14px 8px; line-height: 1.4; }
+    .demo-disclaimer { margin: 0 14px 10px; padding: 8px 10px; background: #ffebee; border: 1px solid #ef9a9a; border-radius: 6px; font-size: 10px; line-height: 1.45; color: #b71c1c; font-weight: 600; }
+    .demo-path-hint {
+      margin: 0 14px 10px;
+      padding: 10px 11px;
+      background: linear-gradient(180deg, #fff3e0 0%, #fff8e1 100%);
+      border: 2px solid #ff9800;
+      border-radius: 8px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #4e342e;
+    }
+    .demo-path-hint b { color: #e65100; display: block; margin-bottom: 4px; font-size: 12px; }
+    .sidebar-panel { padding: 0 14px 14px; }
+    .field { margin-bottom: 10px; }
+    .field label { display: block; font-size: 11px; font-weight: 600; margin-bottom: 3px; color: #444; }
+    .field input, .field select { width: 100%; padding: 7px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .preset-row { display: flex; gap: 5px; margin-bottom: 10px; }
+    .preset-row button { flex: 1; padding: 7px; border: 1px solid #5c6bc0; background: #fff; color: #3949ab; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; }
+    .preset-row button.active { background: #5c6bc0; color: #fff; }
+    .metrics-box { font-size: 11px; line-height: 1.55; background: #e8eaf6; border: 1px solid #9fa8da; border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; color: #283593; }
+    .metrics-box b { display: block; margin-bottom: 4px; font-size: 12px; }
+    .filter-group { margin: 8px 0; padding: 8px; background: #f7f7f7; border-radius: 6px; font-size: 11px; }
+    .filter-group label { display: block; margin: 3px 0; cursor: pointer; }
+    .filter-group h3 { font-size: 11px; margin-bottom: 6px; color: #555; }
+    button.primary { width: 100%; padding: 10px; background: #5c6bc0; color: #fff; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; }
+    button.secondary { width: 100%; margin-top: 8px; padding: 9px; background: #fff; color: #5c6bc0; border: 1px solid #5c6bc0; border-radius: 6px; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .hint-box { font-size: 11px; color: #555; background: #f7f7f7; border-radius: 6px; padding: 8px; margin: 8px 0; line-height: 1.45; }
+    .hint-box.active { background: #fff3e0; color: #e65100; border: 1px solid #ffcc80; }
+    .mc-progress { margin: 8px 0; }
+    .mc-progress-bar { height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden; }
+    .mc-progress-fill { height: 100%; background: #5c6bc0; width: 0%; transition: width 0.15s; }
+    .mc-progress-text { font-size: 10px; color: #555; margin-top: 4px; }
+    .error { margin: 8px 0; padding: 8px; background: #ffebee; color: #c62828; border-radius: 6px; font-size: 12px; display: none; }
+    .main { flex: 1; position: relative; min-width: 0; }
+    #map { position: absolute; inset: 0; }
+    .stats-bar { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1000; background: rgba(255,255,255,0.95); padding: 6px 12px; border-radius: 8px; font-size: 11px; display: flex; flex-wrap: wrap; gap: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); pointer-events: none; }
+    .stats-bar b { color: #3949ab; }
+    .panel-toggle { position: absolute; top: 10px; right: 10px; z-index: 1000; padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; background: rgba(255,255,255,0.95); cursor: pointer; font-size: 12px; }
+    .info-panel { width: 280px; min-width: 280px; background: #fff; border-left: 1px solid #ddd; overflow-y: auto; padding: 12px; font-size: 12px; z-index: 1000; }
+    .info-panel h2 { font-size: 14px; margin-bottom: 8px; color: #283593; }
+    .info-panel h3 { font-size: 11px; color: #555; margin: 8px 0 4px; }
+    .detail-card { font-size: 11px; line-height: 1.55; background: #f5f5f5; border-radius: 6px; padding: 8px 10px; border: 1px solid #e0e0e0; }
+    .detail-card.empty { color: #999; font-style: italic; background: #fafafa; }
+    .detail-card dt { font-weight: 600; color: #444; margin-top: 5px; }
+    .detail-card dt:first-child { margin-top: 0; }
+    .detail-card dd { margin: 0 0 0 8px; color: #333; }
+    .risk-table, .mc-table, .n1-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+    .risk-table th, .risk-table td, .mc-table th, .mc-table td, .n1-table th, .n1-table td { padding: 3px 5px; border-bottom: 1px solid #eee; text-align: left; }
+    .risk-table tr.clickable, .mc-table tr.clickable, .n1-table tr.clickable { cursor: pointer; }
+    .risk-table tr.clickable:hover, .mc-table tr.clickable:hover, .n1-table tr.clickable:hover { background: #e8eaf6; }
+    .mc-table tr.selected { background: #fff3e0; }
+    .cascade-timeline { list-style: none; font-size: 10px; max-height: 140px; overflow-y: auto; line-height: 1.4; }
+    .cascade-timeline li { padding: 4px 0; border-bottom: 1px solid #eee; }
+    .cascade-metrics { font-size: 10px; line-height: 1.5; background: #fff8e1; border: 1px solid #ffe082; border-radius: 6px; padding: 8px; margin-top: 6px; }
+    .mc-summary { font-size: 10px; line-height: 1.5; background: #e3f2fd; border: 1px solid #90caf9; border-radius: 6px; padding: 8px; margin-top: 6px; }
+    .pareto-link { cursor: pointer; text-decoration: underline; color: #1565c0; }
+    .pareto-link.selected { font-weight: 700; color: #e65100; }
+    .node-marker { width: 14px; height: 14px; border-radius: 50%; border: 1px solid #222; }
+    .node-marker.synth { border-style: dashed; }
+    .node-marker.manual { background: #000 !important; }
+    .node-marker.slack { box-shadow: 0 0 0 2px #5c6bc0; }
+    .node-marker.selected { box-shadow: 0 0 0 3px #ff9800; }
+    .node-marker.dimmed { opacity: 0.12; }
+    .node-marker.cascade-outage { background: #000 !important; border: 3px solid #000 !important; }
+    .node-marker.mc-risky { box-shadow: 0 0 0 3px #9C27B0; }
+    .node-marker.pareto-highlight { box-shadow: 0 0 0 3px #FFC107; }
+    body.graph-only .sidebar, body.graph-only .info-panel { display: none !important; }
+  </style>
+</head>
+<body>
+  <a href="home.html" class="home-btn" title="Домой">⌂</a>
+  <aside class="sidebar" id="app-sidebar">
+    <h1>Large engineering geo</h1>
+    <p id="sidebar-desc">Режим 8 из 8 · Инженерная · большой · карта</p>
+    <div class="demo-disclaimer">
+      Large geo engineering screening. Open/derived/synthetic coordinates. Synthetic electrical parameters. Not an operational grid model.
+    </div>
+    <div class="demo-path-hint">
+      <b>Для показа (~1 мин)</b>
+      Построить → Monte Carlo → клик <b>worst scenario</b> → <b>Pareto top 1/3/5</b>.
+      На карте по умолчанию: кластеры узлов + топ-10 risk линий (не паутина).
+    </div>
+    <div class="sidebar-panel">
+      <div class="preset-row">
+        <button type="button" data-n="100" class="active">100</button>
+        <button type="button" data-n="300">300</button>
+        <button type="button" data-n="1000">1000</button>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="n_stations">Станций</label>
+          <input type="number" id="n_stations" value="100" min="30" max="2000">
+        </div>
+        <div class="field">
+          <label for="seed">Seed</label>
+          <input type="number" id="seed" value="42">
+        </div>
+      </div>
+      <div class="metrics-box" id="metrics-box">
+        <b>Метрики DC</b>
+        <span id="metrics-text">Постройте сеть на карте</span>
+      </div>
+      <p id="pool-hint" style="font-size:10px;color:#888;margin-bottom:8px">Загрузка реестра…</p>
+      <button type="button" id="generate-btn" class="primary" disabled>Построить на карте</button>
+
+      <div class="filter-group">
+        <h3>Фильтры</h3>
+        <div class="field-row">
+          <div class="field">
+            <label for="filter-voltage">Напряжение, kV</label>
+            <select id="filter-voltage">
+              <option value="">Все</option>
+              <option value="750">750</option>
+              <option value="500">500</option>
+              <option value="330">330</option>
+              <option value="220">220</option>
+              <option value="110">110</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="filter-type">Тип актива</label>
+            <select id="filter-type">
+              <option value="">Все</option>
+              <option value="generator">generator</option>
+              <option value="load">load</option>
+              <option value="substation">substation</option>
+              <option value="line">line</option>
+              <option value="transformer">transformer</option>
+            </select>
+          </div>
+        </div>
+        <label><input type="checkbox" id="filter-top-risk"> Только top risk (топ-10)</label>
+        <label><input type="checkbox" id="filter-scenario-only"> Только сценарий</label>
+        <label><input type="checkbox" id="filter-pareto-only"> Только Pareto</label>
+      </div>
+
+      <div class="filter-group">
+        <label for="edge_mode">Рёбра на карте</label>
+        <select id="edge_mode">
+          <option value="hidden">Скрыты (дальний масштаб)</option>
+          <option value="top_risk" selected>Top risk (топ-10)</option>
+          <option value="scenario">Сценарий (N-1 / каскад / MC)</option>
+          <option value="active">Важные (с потоком)</option>
+          <option value="all">Все рёбра (debug)</option>
+        </select>
+        <label style="margin-top:6px">Порог потока MW <input type="number" id="flow_threshold" value="1" min="0" style="width:60px"></label>
+      </div>
+
+      <div class="filter-group">
+        <label><input type="checkbox" class="type-f" data-type="generator" checked> Источник</label>
+        <label><input type="checkbox" class="type-f" data-type="consumer" checked> Сток</label>
+        <label><input type="checkbox" class="type-f" data-type="transit" checked> Транзит</label>
+        <label><input type="checkbox" class="status-f" data-status="active" checked> Активен</label>
+        <label><input type="checkbox" class="status-f" data-status="disabled" checked> Отключён</label>
+        <label><input type="checkbox" class="status-f" data-status="failed" checked> Не обеспечен</label>
+      </div>
+
+      <div class="field-row" style="margin-top:8px">
+        <div class="field">
+          <label for="cascade-threshold">Cascade trip %</label>
+          <input type="number" id="cascade-threshold" value="120" min="100" max="300" step="5">
+        </div>
+        <div class="field">
+          <label for="cascade-max-steps">Max steps</label>
+          <input type="number" id="cascade-max-steps" value="10" min="1" max="30">
+        </div>
+      </div>
+      <div class="hint-box" id="cascade-outage-hint">Каскад: кликните узел или линию</div>
+      <button type="button" id="cascade-run-btn" class="secondary" disabled>Запустить каскад</button>
+      <button type="button" id="cascade-reset-btn" class="secondary" disabled>Сбросить каскад</button>
+
+      <div class="field-row" style="margin-top:8px">
+        <div class="field">
+          <label for="mc-runs">Monte Carlo</label>
+          <select id="mc-runs">
+            <option value="100">100</option>
+            <option value="1000">1000</option>
+            <option value="5000">5000</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="mc-max-outages">Outages/run</label>
+          <select id="mc-max-outages">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3" selected>3</option>
+          </select>
+        </div>
+      </div>
+      <button type="button" id="mc-run-btn" class="secondary" disabled>Monte Carlo</button>
+      <button type="button" id="mc-stop-btn" class="secondary" disabled>Стоп MC</button>
+      <button type="button" id="mc-reset-btn" class="secondary" disabled>Сброс MC</button>
+      <div class="mc-progress" id="mc-progress-wrap" style="display:none">
+        <div class="mc-progress-bar"><div class="mc-progress-fill" id="mc-progress-fill"></div></div>
+        <div class="mc-progress-text" id="mc-progress-text">0 / 0</div>
+      </div>
+
+      <button type="button" id="dc-n1-btn" class="secondary" disabled>DC N-1</button>
+      <div class="hint-box" id="n1-hint">N-1: sampled scan @300/1000</div>
+      <div class="error" id="error"></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div id="map"></div>
+    <div class="stats-bar" id="stats-bar">
+      <span>Узлов: <b id="st-v">—</b></span>
+      <span>Рёбер: <b id="st-e">—</b></span>
+      <span>DC load%: <b id="st-dcload">—</b></span>
+      <span>Cap↓: <b id="st-cap">—</b></span>
+      <span>Failed: <b id="st-failed">—</b></span>
+      <span id="timing"></span>
+    </div>
+    <button type="button" id="toggle-panels-btn" class="panel-toggle">⛶ Карта</button>
+  </main>
+
+  <aside class="info-panel" id="app-info-panel">
+    <h2>Детали</h2>
+    <div class="panel-section">
+      <h3>Выбранный объект</h3>
+      <dl class="detail-card empty" id="detail-card">Кликните узел или линию</dl>
+    </div>
+    <div class="panel-section">
+      <h3>Top-10 risky objects</h3>
+      <div style="overflow-x:auto">
+        <table class="risk-table">
+          <thead><tr><th>obj</th><th>type</th><th>kV</th><th>repair d</th><th>risk</th></tr></thead>
+          <tbody id="risk-table-body"><tr><td colspan="5">Постройте сеть</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel-section">
+      <h3>DC N-1 · топ-10</h3>
+      <div style="overflow-x:auto">
+        <table class="n1-table">
+          <thead><tr><th>edge</th><th>load%</th><th>cap↓</th><th>crit↓</th></tr></thead>
+          <tbody id="n1-body"><tr><td colspan="4">Запустите N-1</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel-section">
+      <h3>Каскад · timeline</h3>
+      <ul class="cascade-timeline" id="cascade-timeline"><li>—</li></ul>
+      <div class="cascade-metrics" id="cascade-metrics">—</div>
+    </div>
+    <div class="panel-section">
+      <h3>Monte Carlo · worst</h3>
+      <div style="overflow-x:auto">
+        <table class="mc-table">
+          <thead><tr><th>#</th><th>damage</th><th>unserved</th><th>crit</th><th>steps</th></tr></thead>
+          <tbody id="mc-worst-body"><tr><td colspan="5">—</td></tr></tbody>
+        </table>
+      </div>
+      <div class="mc-summary" id="mc-pareto-summary">После Monte Carlo: кликните Protect top 1/3/5 для подсветки на карте</div>
+    </div>
+  </aside>
+
+  <script src="graph_core.js?v=17"></script>
+  <script>
+    const ROLE_COLORS = { generator: "#4CAF50", consumer: "#F44336", transit: "#2196F3" };
+    const ASSET_NAMES = { generator: "generation", consumer: "load", transit: "transit" };
+
+    let map = null, clusterGroup = null, edgesLayer = null;
+    let graphState = null, disabledSet = new Set(), disabledEdgesSet = new Set();
+    let solarPool = [], lastFullData = null, baselineRawData = null;
+    let rebalancing = false, drawingMap = false, rebalanceTimer = null, zoomRebalanceTimer = null;
+    let markerById = new Map(), highlightNodes = [];
+    let selectedNodeId = null, selectedEdgeId = null;
+    let cascadeInitialOutage = null, cascadeActive = false, preCascadeSnapshot = null;
+    let mcResults = null, mcRunning = false, mcCancel = false;
+    let mcPreviewActive = false, preMcPreviewSnapshot = null, selectedMcRunId = null;
+    let mcRiskyKeys = new Set(), paretoKeys = new Set(), paretoHighlightCount = null, selectedMcObjectKey = null;
+
+    function nodeId(r) { return typeof r === "string" ? parseInt(r, 10) : r; }
+    function edgeKey(u, v) { return `${Math.min(+u, +v)},${Math.max(+u, +v)}`; }
+    function edgeKeyFromId(id) { const [u,v]=String(id).split("-").map(Number); return edgeKey(u,v); }
+    function nodeMcKey(id) { return `node:${nodeId(id)}`; }
+    function edgeMcKeyFromId(edgeId) { return `edge:${edgeKeyFromId(edgeId)}`; }
+    function yieldToUi() { return new Promise(r => setTimeout(r, 0)); }
+
+    function showError(m) { const e = document.getElementById("error"); e.textContent = m || ""; e.style.display = m ? "block" : "none"; }
+    function isValidCoord(lat, lng) {
+      return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+    }
+
+    function filterSolar(stations) {
+      return GraphCore.normalizeSolarPool
+        ? GraphCore.normalizeSolarPool(stations)
+        : (stations || []).filter(s => {
+            const lat = s.lat ?? s.latitude;
+            const lon = s.lon ?? s.lng ?? s.longitude;
+            return (s.type === "solar" || !s.type) && lat != null && lon != null;
+          }).map(s => ({ ...s, lat: +(s.lat ?? s.latitude), lon: +(s.lon ?? s.lng ?? s.longitude), type: s.type || "solar" }));
+    }
+
+    async function loadSolarSample() {
+      const paths = ["data/solar_sample.json", "./data/solar_sample.json", "docs/data/solar_sample.json"];
+      for (const path of paths) {
+        try {
+          const r = await fetch(path);
+          if (!r.ok) continue;
+          const data = await r.json();
+          if (Array.isArray(data) && data.length) return filterSolar(data);
+        } catch (_) {}
+      }
+      throw new Error("Не удалось загрузить solar_sample.json");
+    }
+
+    function loadRemoteRegistry() {
+      return new Promise((resolve, reject) => {
+        if (typeof ALL_STATIONS !== "undefined") { resolve(filterSolar(ALL_STATIONS)); return; }
+        const s = document.createElement("script");
+        s.src = "https://vde-map.vercel.app/all_stations.js";
+        const timer = setTimeout(() => { s.remove(); reject(new Error("Таймаут")); }, 15000);
+        s.onload = () => {
+          clearTimeout(timer);
+          if (typeof ALL_STATIONS === "undefined") reject(new Error("ALL_STATIONS не найден"));
+          else resolve(filterSolar(ALL_STATIONS));
+        };
+        s.onerror = () => { clearTimeout(timer); reject(new Error("vde-map недоступен")); };
+        document.head.appendChild(s);
+      });
+    }
+
+    async function loadSolarPool() {
+      try { const remote = await loadRemoteRegistry(); if (remote.length) return remote; } catch (_) {}
+      return loadSolarSample();
+    }
+
+    function getEffectiveEdgeMode() {
+      const zm = map ? map.getZoom() : 6;
+      let edgeMode = document.getElementById("edge_mode").value;
+      if (edgeMode === "all" && zm < 9) edgeMode = "active";
+      return edgeMode;
+    }
+
+    function getRenderOpts() {
+      const n = graphState?.params?.n_vertices || +document.getElementById("n_stations").value || 100;
+      const defaults = GraphCore.defaultRenderOpts(n);
+      const typeFilter = { generator: true, consumer: true, transit: true };
+      document.querySelectorAll(".type-f").forEach(cb => { typeFilter[cb.dataset.type] = cb.checked; });
+      const statusFilter = { active: true, disabled: true, failed: true };
+      document.querySelectorAll(".status-f").forEach(cb => { statusFilter[cb.dataset.status] = cb.checked; });
+      const uiEdgeMode = document.getElementById("edge_mode").value;
+      let edgeMode = getEffectiveEdgeMode();
+      if (uiEdgeMode === "top_risk") edgeMode = "hidden";
+      else if (uiEdgeMode === "scenario" && edgeMode !== "all") edgeMode = "active";
+      const flowThreshold = uiEdgeMode === "top_risk"
+        ? 0
+        : (+document.getElementById("flow_threshold").value || 0);
+      return {
+        labelMode: defaults.labelMode,
+        flowThreshold,
+        edgeMode,
+        uiEdgeMode,
+        typeFilter,
+        statusFilter,
+        highlightNodes,
+        showZeroEdges: defaults.showZeroEdges,
+      };
+    }
+
+    function getEngOpts(fast) {
+      const opts = { flowMode: "dc", renderOpts: getRenderOpts() };
+      if (fast && lastFullData?.engineering_risk) {
+        opts.skipRisk = true;
+        opts.cachedRisk = lastFullData.engineering_risk;
+      }
+      return opts;
+    }
+
+    function stateWithDisables() {
+      const edges = [...disabledEdgesSet].map(k => k.split(",").map(Number));
+      return { ...graphState, disabled_edges: edges };
+    }
+
+    function getVisFilters() {
+      return {
+        voltage: document.getElementById("filter-voltage").value,
+        assetType: document.getElementById("filter-type").value,
+        topRiskOnly: document.getElementById("filter-top-risk").checked,
+        scenarioOnly: document.getElementById("filter-scenario-only").checked,
+        paretoOnly: document.getElementById("filter-pareto-only").checked,
+      };
+    }
+
+    function isScenarioNode(n) {
+      const id = nodeId(n.id);
+      return n.n1_outage || n.cascade_initial_outage || n.cascade_failed || n.cascade_critical_unserved
+        || mcRiskyKeys.has(nodeMcKey(id)) || paretoKeys.has(nodeMcKey(id));
+    }
+
+    function isScenarioEdge(e) {
+      const ek = edgeKeyFromId(e.id);
+      return e.n1_outage || e.cascade_initial_outage || e.cascade_tripped || e.cascade_overload
+        || mcRiskyKeys.has(`edge:${ek}`) || paretoKeys.has(`edge:${ek}`);
+    }
+
+    function filterVisData(data) {
+      if (!data) return data;
+      const f = getVisFilters();
+      const topSet = new Set((data.top_risk_objects || []).map(o =>
+        o.kind === "node" ? `n:${o.id}` : `e:${o.edgeKey}`
+      ));
+      const nodeTypes = new Set(["bus", "generator", "load", "substation"]);
+      const edgeTypes = new Set(["line", "transformer"]);
+      const nodes = data.nodes.map(n => {
+        let match = true;
+        let opacity = 1;
+        if (f.voltage && String(n.voltage_level_kv) !== f.voltage) { match = false; opacity = 0.1; }
+        if (f.assetType && nodeTypes.has(f.assetType) && n.asset_type !== f.assetType) { match = false; opacity = 0.1; }
+        if (f.assetType && edgeTypes.has(f.assetType)) { match = false; opacity = 0.1; }
+        if (f.topRiskOnly && !topSet.has(`n:${nodeId(n.id)}`)) { match = false; opacity = 0.08; }
+        if (f.scenarioOnly && !isScenarioNode(n)) { match = false; opacity = 0.08; }
+        if (f.paretoOnly && !paretoKeys.has(nodeMcKey(n.id))) { match = false; opacity = 0.08; }
+        return { ...n, opacity: match ? 1 : opacity };
+      });
+      const edges = data.edges.map(e => {
+        let match = true;
+        let opacity = 0.65;
+        const et = e.edge_type || "line";
+        const vtag = et === "transformer" ? `${e.from_voltage_kv || ""}${e.to_voltage_kv || ""}` : String(e.voltage_level_kv || "");
+        if (f.voltage && !vtag.includes(f.voltage)) { match = false; opacity = 0.06; }
+        if (f.assetType && edgeTypes.has(f.assetType) && et !== f.assetType) { match = false; opacity = 0.06; }
+        if (f.assetType && nodeTypes.has(f.assetType)) { match = false; opacity = 0.06; }
+        const [u, v] = String(e.id).split("-").map(Number);
+        if (f.topRiskOnly && !topSet.has(`e:${edgeKey(u, v)}`)) { match = false; opacity = 0.06; }
+        if (f.scenarioOnly && !isScenarioEdge(e)) { match = false; opacity = 0.06; }
+        if (f.paretoOnly && !paretoKeys.has(`edge:${edgeKey(u, v)}`)) { match = false; opacity = 0.06; }
+        return { ...e, opacity: match ? (e.opacity ?? 0.65) : opacity };
+      });
+      return { ...data, nodes, edges };
+    }
+
+    function shouldDrawEdge(e, data) {
+      const mode = getEffectiveEdgeMode();
+      if (mode === "hidden") return false;
+      const ek = edgeKeyFromId(e.id);
+      const flow = Math.abs(e.flow_mw ?? e.dc_flow_mw ?? 0);
+      const zeroFlow = flow < 1e-9;
+      const thresh = +document.getElementById("flow_threshold").value || 0;
+      if (mode === "active" && zeroFlow && !e.disabled_manual_edge && flow < thresh) return false;
+      if (mode === "top_risk") {
+        const topEdges = new Set((data.top_risk_objects || []).filter(o => o.kind === "edge").map(o => o.edgeKey));
+        return topEdges.has(ek) || e.n1_outage || paretoKeys.has(`edge:${ek}`) || mcRiskyKeys.has(`edge:${ek}`);
+      }
+      if (mode === "scenario") return isScenarioEdge(e);
+      if (flow < thresh && !e.disabled_manual_edge && !e.n1_outage) return false;
+      return true;
+    }
+
+    function dcLoadingColor(percent, edge) {
+      if (edge?.n1_outage) return "#e65100";
+      if (edge?.dc_violation || edge?.capacity_violation || percent > 100) return "#c62828";
+      if (percent >= 70) return "#FF9800";
+      return "#555555";
+    }
+
+    function edgeLineStyle(e, loading) {
+      const baseOpacity = e.opacity != null ? e.opacity : 0.65;
+      const ek = edgeKeyFromId(e.id);
+      if (e.cascade_initial_outage) return { color: "#000000", weight: 6, opacity: Math.max(baseOpacity, 0.95), dashArray: null };
+      if (e.cascade_tripped) return { color: "#9e9e9e", weight: 2, opacity: Math.max(baseOpacity, 0.65), dashArray: "6 8" };
+      if (e.cascade_overload) return { color: "#FF9800", weight: 4, opacity: Math.max(baseOpacity, 0.9), dashArray: null };
+      if (paretoKeys.has(ek) || paretoKeys.has(`edge:${ek}`)) return { color: "#FFC107", weight: 5, opacity: Math.max(baseOpacity, 0.95), dashArray: null };
+      if (mcRiskyKeys.has(ek) || mcRiskyKeys.has(`edge:${ek}`)) return { color: "#9C27B0", weight: 4, opacity: Math.max(baseOpacity, 0.9), dashArray: null };
+      if (e.n1_outage) return { color: "#e65100", weight: 6, opacity: Math.max(baseOpacity, 0.95), dashArray: "10 6" };
+      const color = dcLoadingColor(loading, e);
+      return { color, weight: selectedEdgeId === e.id ? 5 : e.dc_violation ? 4 : 2, opacity: baseOpacity, dashArray: e.disabled_manual_edge ? "6 6" : null };
+    }
+
+    function makeIcon(node) {
+      const off = disabledSet.has(nodeId(node.id)) || node.disabled_manual;
+      const fail = node.disabled_failed;
+      let col = off ? "#000" : fail ? "#bdbdbd" : ROLE_COLORS[node.role] || "#888";
+      const synth = node.synthetic || (node.coord_source && node.coord_source !== "OPEN_DATA") ? " synth" : "";
+      const manual = off ? " manual" : "";
+      const border = node.is_critical ? "2px solid #FF9800" : "1px solid #222";
+      let extra = "";
+      if (node.opacity != null && node.opacity < 0.5) extra += " dimmed";
+      if (node.cascade_initial_outage) extra += " cascade-outage";
+      if (node.is_slack) extra += " slack";
+      if (selectedNodeId === nodeId(node.id)) extra += " selected";
+      const nk = nodeMcKey(node.id);
+      if (paretoKeys.has(nk)) extra += " pareto-highlight";
+      else if (mcRiskyKeys.has(nk)) extra += " mc-risky";
+      if (node.cascade_initial_outage) col = "#000";
+      return L.divIcon({
+        className: "",
+        html: `<div class="node-marker${synth}${manual}${extra}" style="background:${col};border:${border}"></div>`,
+        iconSize: [14, 14],
+        iconAnchor: [7, 7],
+      });
+    }
+
+    function patchMarkerToggle(id) {
+      const m = markerById.get(nodeId(id));
+      if (!m) return;
+      const node = lastFullData?.nodes.find(n => nodeId(n.id) === nodeId(id));
+      if (!node) return;
+      const patched = { ...node, disabled_manual: disabledSet.has(nodeId(id)) };
+      m.setIcon(makeIcon(patched));
+      document.getElementById("st-failed").textContent = disabledSet.size;
+    }
+
+    function renderMetrics(data) {
+      const m = data?.engineering_metrics || {};
+      document.getElementById("metrics-text").innerHTML = [
+        `DC solved: <b>${m.dc_solved ? "yes" : "no"}</b>`,
+        `Slack: <b>${m.slack_label ?? m.slack_node ?? "—"}</b>`,
+        `Max loading: <b>${m.max_loading_percent ?? "—"}%</b>`,
+        `Cap violations: <b>${m.capacity_violations ?? 0}</b>`,
+        `Gen: <b>${m.total_generation ?? "—"} MW</b>`,
+        `Load: <b>${m.total_load ?? "—"} MW</b>`,
+      ].join("<br>");
+    }
+
+    function updateStats(s) {
+      if (!s) return;
+      document.getElementById("st-v").textContent = s.vertices;
+      document.getElementById("st-e").textContent = s.edges_count;
+      document.getElementById("st-dcload").textContent = s.dc_max_loading_percent ?? "—";
+      document.getElementById("st-cap").textContent = s.dc_capacity_violations ?? "—";
+      document.getElementById("st-failed").textContent = s.failed_count ?? "—";
+    }
+
+    function renderNodeDetail(node) {
+      selectedNodeId = nodeId(node.id);
+      selectedEdgeId = null;
+      const card = document.getElementById("detail-card");
+      card.className = "detail-card";
+      const type = node.asset_type || ASSET_NAMES[node.role] || node.role;
+      card.innerHTML = `
+        <dt>Узел #${node.id}</dt><dd>${node.station_name || node.display_name || ""}</dd>
+        <dt>type</dt><dd>${type}</dd>
+        <dt>kV</dt><dd>${node.voltage_level_kv ?? "—"}</dd>
+        <dt>risk</dt><dd>${node.risk_score ?? 0} · impact ${node.impact_mw ?? 0} MW</dd>
+        <dt>θ</dt><dd>${node.theta != null ? node.theta : "—"}</dd>
+        <dt>slack</dt><dd>${node.is_slack ? "yes" : "no"}</dd>`;
+      cascadeInitialOutage = { kind: "node", id: nodeId(node.id), label: node.display_name || `#${node.id}` };
+      updateCascadeHint();
+      refreshMarkerIcons();
+    }
+
+    function renderEdgeDetail(edge) {
+      selectedEdgeId = edge.id;
+      selectedNodeId = null;
+      const card = document.getElementById("detail-card");
+      card.className = "detail-card";
+      const loading = edge.dc_loading_percent ?? edge.loading_percent ?? 0;
+      const [u, v] = String(edge.id).split("-").map(Number);
+      card.innerHTML = `
+        <dt>Линия</dt><dd>${edge.label || edge.id}</dd>
+        <dt>type</dt><dd>${edge.edge_type || "line"}</dd>
+        <dt>loading</dt><dd>${loading}%</dd>
+        <dt>capacity</dt><dd>${edge.capacity_mw ?? "—"} MW</dd>
+        <dt>risk</dt><dd>${edge.risk_score ?? 0}</dd>`;
+      cascadeInitialOutage = { kind: "edge", edgeKey: edgeKey(u, v), label: edge.label || edge.id };
+      updateCascadeHint();
+    }
+
+    function renderRiskTable(data) {
+      const rows = data?.top_risk_objects || [];
+      const body = document.getElementById("risk-table-body");
+      if (!rows.length) { body.innerHTML = "<tr><td colspan=\"5\">Нет данных</td></tr>"; return; }
+      body.innerHTML = rows.map(r => `
+        <tr class="clickable" data-kind="${r.kind}" data-ref="${r.kind === "node" ? r.id : (r.edgeKey || r.id)}">
+          <td>${r.object}</td><td>${r.type}</td><td>${r.voltage_kv}</td><td>${r.repair_time_days ?? "—"}</td><td><b>${r.risk_score}</b></td>
+        </tr>`).join("");
+      body.querySelectorAll("tr.clickable").forEach(tr => {
+        tr.addEventListener("click", () => {
+          const kind = tr.dataset.kind, ref = tr.dataset.ref;
+          if (!lastFullData) return;
+          if (kind === "node") focusOnNode(ref);
+          else {
+            const e = lastFullData.edges.find(x => x.id === ref || edgeKeyFromId(x.id) === ref);
+            if (e) focusOnEdge(e.id);
+          }
+        });
+      });
+    }
+
+    function renderN1Table(data) {
+      const rows = data?.dc_n1?.scenarios || [];
+      const body = document.getElementById("n1-body");
+      if (!rows.length) { body.innerHTML = "<tr><td colspan=\"4\">Запустите N-1</td></tr>"; return; }
+      const note = data.dc_n1?.sampled ? ` <small>(sample ${data.dc_n1.edges_scanned}/${data.dc_n1.edges_total})</small>` : "";
+      body.innerHTML = rows.slice(0, 10).map(r => `
+        <tr class="clickable" data-ek="${r.edgeKey}">
+          <td>${r.label}</td><td>${r.dc_max_loading_percent}%</td><td>${r.dc_capacity_violations}</td><td>${r.critical_unserved_count}</td>
+        </tr>`).join("") + (note ? `<tr><td colspan="4">${note}</td></tr>` : "");
+      body.querySelectorAll("tr[data-ek]").forEach(tr => {
+        tr.addEventListener("click", async () => {
+          try {
+            const data = GraphCore.applyDcN1Scenario(stateWithDisables(), tr.dataset.ek, [...disabledSet], null, getEngOpts());
+            if (lastFullData?.dc_n1) data.dc_n1 = lastFullData.dc_n1;
+            applyResult(data, false);
+            const outage = data.edges.find(e => e.n1_outage);
+            if (outage) renderEdgeDetail(outage);
+          } catch (e) { showError(e.message); }
+        });
+      });
+    }
+
+    function renderCascadePanel(data) {
+      const tl = data?.dc_cascade?.timeline || [];
+      document.getElementById("cascade-timeline").innerHTML = tl.length
+        ? tl.map(t => `<li><b>Step ${t.step}:</b> ${t.message}</li>`).join("")
+        : "<li>—</li>";
+      const m = data?.dc_cascade?.metrics;
+      const el = document.getElementById("cascade-metrics");
+      if (!m) { el.textContent = "—"; return; }
+      el.innerHTML = [
+        `steps: <b>${m.cascade_steps}</b>`,
+        `failed: <b>${m.failed_assets_count}</b>`,
+        `unserved: <b>${m.unserved_load_mw} MW</b>`,
+        `critical: <b>${m.critical_unserved_count}</b>`,
+        `stable: <b>${m.stable ? "yes" : "no"}</b>`,
+      ].join(" · ");
+    }
+
+    function renderMonteCarloPanels(results) {
+      const worst = results?.aggregate?.worst_scenarios || [];
+      const body = document.getElementById("mc-worst-body");
+      body.innerHTML = worst.length
+        ? worst.slice(0, 10).map(r => `
+          <tr class="clickable${selectedMcRunId === r.run_id ? " selected" : ""}" data-run-id="${r.run_id}">
+            <td>#${r.run_id}</td><td><b>${r.damage_score}</b></td><td>${r.unserved_load_mw}</td><td>${r.critical_unserved_count}</td><td>${r.cascade_steps}</td>
+          </tr>`).join("")
+        : "<tr><td colspan=\"5\">—</td></tr>";
+      body.querySelectorAll("tr.clickable").forEach(tr => {
+        tr.addEventListener("click", () => previewMcScenario(+tr.dataset.runId));
+      });
+      const pareto = results?.pareto || [];
+      const pel = document.getElementById("mc-pareto-summary");
+      if (!pareto.length) {
+        pel.textContent = results?.aggregate
+          ? `avg damage: ${results.aggregate.avg_damage_score} · кликните Protect top 1/3/5`
+          : "После Monte Carlo: кликните Protect top 1/3/5 для подсветки на карте";
+      } else {
+        pel.innerHTML = [
+          results.aggregate ? `avg damage: <b>${results.aggregate.avg_damage_score}</b>` : "",
+          ...pareto.map(p => {
+            const cls = paretoHighlightCount === p.protect_count ? "pareto-link selected" : "pareto-link";
+            return `<span class="${cls}" data-pareto="${p.protect_count}">Protect top ${p.protect_count}: <b>${p.damage_reduced_percent}%</b></span>`;
+          }),
+        ].filter(Boolean).join("<br>");
+        pel.querySelectorAll(".pareto-link").forEach(el => {
+          el.addEventListener("click", () => highlightPareto(+el.dataset.pareto));
+        });
+      }
+    }
+
+    function updateCascadeHint() {
+      const el = document.getElementById("cascade-outage-hint");
+      if (!cascadeInitialOutage) {
+        el.textContent = "Каскад: кликните узел или линию";
+        el.className = "hint-box";
+      } else {
+        el.textContent = `Старт: ${cascadeInitialOutage.kind} · ${cascadeInitialOutage.label}`;
+        el.className = "hint-box active";
+      }
+      document.getElementById("cascade-run-btn").disabled = !graphState || cascadeActive || !cascadeInitialOutage;
+    }
+
+    function updateMcProgress(done, total) {
+      const wrap = document.getElementById("mc-progress-wrap");
+      wrap.style.display = total > 0 ? "block" : "none";
+      document.getElementById("mc-progress-fill").style.width = total ? `${Math.round(done / total * 100)}%` : "0%";
+      document.getElementById("mc-progress-text").textContent = `${done} / ${total}`;
+    }
+
+    function clearMcHighlights() {
+      mcRiskyKeys = new Set();
+      paretoKeys = new Set();
+      paretoHighlightCount = null;
+      selectedMcObjectKey = null;
+    }
+
+    function highlightPareto(protectCount) {
+      if (!mcResults?.aggregate?.object_frequency?.length) return;
+      if (mcPreviewActive) resetMcPreview();
+      paretoHighlightCount = protectCount;
+      paretoKeys = new Set(mcResults.aggregate.object_frequency.slice(0, protectCount).map(o => o.key));
+      mcRiskyKeys = new Set(paretoKeys);
+      lastFullData = baselineRawData || lastFullData;
+      redrawFiltered(false);
+      renderMonteCarloPanels(mcResults);
+    }
+
+    function focusOnNode(id) {
+      const n = lastFullData?.nodes.find(x => nodeId(x.id) === nodeId(id));
+      if (!n || !map) return;
+      map.setView([n.lat, n.lng], Math.max(map.getZoom(), 10), { animate: false });
+      renderNodeDetail(n);
+      const m = markerById.get(nodeId(id));
+      if (m) try { m.openTooltip(); } catch (_) {}
+      redrawFiltered(false);
+    }
+
+    function focusOnEdge(edgeId) {
+      const e = lastFullData?.edges.find(x => x.id === edgeId);
+      if (!e || !map) return;
+      const nodeMap = new Map(lastFullData.nodes.map(n => [nodeId(n.id), n]));
+      const from = nodeMap.get(nodeId(e.from)), to = nodeMap.get(nodeId(e.to));
+      if (!from || !to) return;
+      map.setView([(from.lat + to.lat) / 2, (from.lng + to.lng) / 2], Math.max(map.getZoom(), 10), { animate: false });
+      renderEdgeDetail(e);
+      redrawFiltered(false);
+    }
+
+    function refreshMarkerIcons() {
+      if (!lastFullData) return;
+      for (const n of lastFullData.nodes) {
+        const m = markerById.get(nodeId(n.id));
+        if (m) m.setIcon(makeIcon(n));
+      }
+    }
+
+    function cancelMapJobs() {
+      clearTimeout(zoomRebalanceTimer);
+      clearTimeout(rebalanceTimer);
+      zoomRebalanceTimer = null;
+      rebalanceTimer = null;
+    }
+
+    function resetClusterGroup() {
+      if (!map) return;
+      if (clusterGroup) {
+        try { map.removeLayer(clusterGroup); clusterGroup.clearLayers(); } catch (_) {}
+      }
+      clusterGroup = L.markerClusterGroup({
+        maxClusterRadius: 55,
+        disableClusteringAtZoom: 11,
+        spiderfyOnMaxZoom: false,
+        showCoverageOnHover: false,
+      });
+      map.addLayer(clusterGroup);
+    }
+
+    function clearMapLayers(fullReset) {
+      cancelMapJobs();
+      if (fullReset) { resetClusterGroup(); if (edgesLayer) edgesLayer.clearLayers(); return; }
+      if (clusterGroup) try { clusterGroup.clearLayers(); } catch (_) { resetClusterGroup(); }
+      if (edgesLayer) edgesLayer.clearLayers();
+    }
+
+    function drawGraph(data, fit) {
+      if (!map) initMap();
+      drawingMap = true;
+      try {
+        const vis = filterVisData(data);
+        lastFullData = data;
+        updateStats(data.summary);
+        const geoNodes = vis.nodes.filter(n => isValidCoord(n.lat, n.lng));
+        if (!geoNodes.length && vis.nodes.length) { showError("Узлы без координат"); return; }
+        showError("");
+        clearMapLayers(!!fit);
+        markerById.clear();
+        const nodeMap = new Map(geoNodes.map(n => [nodeId(n.id), n]));
+
+        for (const e of vis.edges) {
+          if (!shouldDrawEdge(e, data)) continue;
+          const from = nodeMap.get(nodeId(e.from)), to = nodeMap.get(nodeId(e.to));
+          if (!from || !to) continue;
+          const loading = e.dc_loading_percent ?? e.loading_percent ?? 0;
+          const style = edgeLineStyle(e, loading);
+          const line = L.polyline([[from.lat, from.lng], [to.lat, to.lng]], style);
+          const hit = L.polyline([[from.lat, from.lng], [to.lat, to.lng]], { color: "#000", weight: 14, opacity: 0 });
+          hit.on("click", () => renderEdgeDetail(e));
+          edgesLayer.addLayer(line);
+          edgesLayer.addLayer(hit);
+        }
+
+        for (const node of geoNodes) {
+          const id = nodeId(node.id);
+          const m = L.marker([node.lat, node.lng], { icon: makeIcon(node), riseOnHover: true });
+          const tip = (node.title || node.tooltip || node.station_name || `#${id} ${node.role}`).replace(/\n/g, "<br>");
+          m.bindTooltip(tip, { direction: "top", offset: [0, -8] });
+          m.on("click", () => {
+            if (rebalancing || drawingMap) return;
+            renderNodeDetail(node);
+            highlightNodes = [id];
+            if (disabledSet.has(id)) disabledSet.delete(id); else disabledSet.add(id);
+            patchMarkerToggle(id);
+            scheduleRebalance();
+          });
+          clusterGroup.addLayer(m);
+          markerById.set(id, m);
+        }
+
+        if (fit && geoNodes.length) {
+          map.invalidateSize();
+          const b = L.latLngBounds(geoNodes.map(n => [n.lat, n.lng]));
+          if (b.isValid()) map.fitBounds(b.pad(0.12), { animate: false, padding: [24, 24] });
+        }
+      } catch (e) { showError(e.message || String(e)); }
+      finally { drawingMap = false; }
+    }
+
+    function redrawFiltered(fit) {
+      if (!lastFullData) return;
+      drawGraph(lastFullData, fit);
+    }
+
+    function scheduleRebalance() {
+      if (rebalanceTimer) clearTimeout(rebalanceTimer);
+      rebalanceTimer = setTimeout(() => { rebalanceTimer = null; runRebalance(); }, 0);
+    }
+
+    async function runRebalance() {
+      if (!graphState || rebalancing || drawingMap) {
+        if (rebalancing) scheduleRebalance();
+        return;
+      }
+      rebalancing = true;
+      const t0 = performance.now();
+      document.getElementById("timing").textContent = "Пересчёт…";
+      await yieldToUi();
+      try {
+        const data = GraphCore.rebalanceEngineering(stateWithDisables(), [...disabledSet], null, getEngOpts(true));
+        if (lastFullData?.dc_n1) data.dc_n1 = lastFullData.dc_n1;
+        if (lastFullData?.dc_n1_summary) data.dc_n1_summary = lastFullData.dc_n1_summary;
+        if (cascadeActive && lastFullData?.dc_cascade) data.dc_cascade = lastFullData.dc_cascade;
+        applyResult(data, false);
+        document.getElementById("timing").textContent = `${Math.round(performance.now() - t0)} мс`;
+      } catch (e) { showError(e.message); document.getElementById("timing").textContent = ""; }
+      finally { rebalancing = false; }
+    }
+
+    function applyResult(data, fit) {
+      lastFullData = data;
+      if (!baselineRawData || !mcPreviewActive) baselineRawData = data;
+      graphState = data.state;
+      disabledSet = new Set((data.disabled || []).map(nodeId));
+      disabledEdgesSet = new Set((data.disabled_edges || []).map(e => edgeKeyFromId(`${e[0]}-${e[1]}`)));
+      renderMetrics(data);
+      renderRiskTable(data);
+      if (data.dc_n1) renderN1Table(data);
+      renderCascadePanel(cascadeActive ? data : null);
+      renderMonteCarloPanels(mcResults);
+      if (data.dc_n1_summary) {
+        const h = document.getElementById("n1-hint");
+        h.textContent = data.dc_n1_summary;
+        h.className = "hint-box active";
+      }
+      drawGraph(data, fit);
+      document.getElementById("dc-n1-btn").disabled = false;
+      document.getElementById("cascade-run-btn").disabled = cascadeActive || !cascadeInitialOutage;
+      document.getElementById("mc-run-btn").disabled = mcRunning || !graphState;
+      updateCascadeHint();
+    }
+
+    function initMap() {
+      if (map) return;
+      map = L.map("map").setView([48.5, 31.2], 6);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18 }).addTo(map);
+      clusterGroup = L.markerClusterGroup({
+        maxClusterRadius: 55,
+        disableClusteringAtZoom: 11,
+        spiderfyOnMaxZoom: false,
+        showCoverageOnHover: false,
+      });
+      map.addLayer(clusterGroup);
+      edgesLayer = L.layerGroup().addTo(map);
+      map.on("zoomend", () => {
+        if (!graphState || drawingMap || rebalancing) return;
+        clearTimeout(zoomRebalanceTimer);
+        zoomRebalanceTimer = setTimeout(() => redrawFiltered(false), 80);
+      });
+      setTimeout(() => map.invalidateSize(), 100);
+    }
+
+    async function generate() {
+      showError("");
+      cancelMapJobs();
+      const btn = document.getElementById("generate-btn");
+      btn.disabled = true;
+      const t0 = performance.now();
+      highlightNodes = [];
+      disabledSet = new Set();
+      disabledEdgesSet = new Set();
+      cascadeActive = false;
+      preCascadeSnapshot = null;
+      cascadeInitialOutage = null;
+      mcResults = null;
+      mcPreviewActive = false;
+      preMcPreviewSnapshot = null;
+      clearMcHighlights();
+      selectedNodeId = null;
+      selectedEdgeId = null;
+      document.getElementById("detail-card").className = "detail-card empty";
+      document.getElementById("detail-card").textContent = "Кликните узел или линию";
+      renderCascadePanel(null);
+      renderMonteCarloPanels(null);
+      updateMcProgress(0, 0);
+      await yieldToUi();
+      try {
+        initMap();
+        const count = +document.getElementById("n_stations").value;
+        const seed = +document.getElementById("seed").value;
+        const raw = GraphCore.generateEngineeringLargeGeo(solarPool, { count, seed, ...getEngOpts() });
+        const data = GraphCore.rebalanceEngineering(raw.state, [], null, getEngOpts());
+        if (!data.nodes.length) throw new Error("Граф без узлов");
+        applyResult(data, true);
+        document.getElementById("timing").textContent = `${Math.round(performance.now() - t0)} мс`;
+        document.getElementById("n1-body").innerHTML = "<tr><td colspan=\"4\">Запустите N-1</td></tr>";
+        document.getElementById("n1-hint").textContent = "N-1: sampled scan @300/1000";
+        document.getElementById("n1-hint").className = "hint-box";
+      } catch (e) { showError(e.message); }
+      finally { btn.disabled = false; }
+    }
+
+    async function runDcN1() {
+      if (!graphState) return;
+      const btn = document.getElementById("dc-n1-btn");
+      btn.disabled = true;
+      const t0 = performance.now();
+      await yieldToUi();
+      try {
+        const data = GraphCore.dcN1Analysis(stateWithDisables(), [...disabledSet], null, { ...getEngOpts(), applyWorst: false });
+        lastFullData = { ...lastFullData, dc_n1: data.dc_n1, dc_n1_summary: data.dc_n1_summary };
+        renderN1Table(data);
+        document.getElementById("n1-hint").textContent = data.dc_n1_summary || "N-1 готово";
+        document.getElementById("n1-hint").className = "hint-box active";
+        document.getElementById("timing").textContent = `N-1: ${Math.round(performance.now() - t0)} мс`;
+      } catch (e) { showError(e.message); }
+      finally { btn.disabled = false; }
+    }
+
+    async function runCascade() {
+      if (!graphState || !cascadeInitialOutage) { showError("Выберите стартовый отказ"); return; }
+      showError("");
+      preCascadeSnapshot = { graphState, disabledSet: new Set(disabledSet), lastFullData };
+      const btn = document.getElementById("cascade-run-btn");
+      btn.disabled = true;
+      await yieldToUi();
+      try {
+        const data = GraphCore.runDCCascade(stateWithDisables(), [...disabledSet], null, getEngOpts(), {
+          initialOutage: cascadeInitialOutage,
+          tripThreshold: +document.getElementById("cascade-threshold").value || 120,
+          maxSteps: +document.getElementById("cascade-max-steps").value || 10,
+        });
+        cascadeActive = true;
+        applyResult(data, false);
+        renderCascadePanel(data);
+        document.getElementById("cascade-reset-btn").disabled = false;
+      } catch (e) { showError(e.message); }
+      finally { btn.disabled = cascadeActive; }
+    }
+
+    function resetCascade() {
+      if (!preCascadeSnapshot) return;
+      const snap = preCascadeSnapshot;
+      graphState = snap.graphState;
+      disabledSet = new Set(snap.disabledSet);
+      cascadeActive = false;
+      preCascadeSnapshot = null;
+      const data = GraphCore.rebalanceEngineering(stateWithDisables(), [...disabledSet], null, getEngOpts());
+      if (snap.lastFullData?.dc_n1) { data.dc_n1 = snap.lastFullData.dc_n1; data.dc_n1_summary = snap.lastFullData.dc_n1_summary; }
+      applyResult(data, false);
+      renderCascadePanel(null);
+      document.getElementById("cascade-reset-btn").disabled = true;
+      updateCascadeHint();
+    }
+
+    function getMcOpts() {
+      return {
+        runs: +document.getElementById("mc-runs").value || 100,
+        maxOutagesPerScenario: +document.getElementById("mc-max-outages").value || 3,
+        seed: +document.getElementById("seed").value || 42,
+        useCascade: true,
+        tripThreshold: +document.getElementById("cascade-threshold").value || 120,
+        maxCascadeSteps: +document.getElementById("cascade-max-steps").value || 10,
+      };
+    }
+
+    function previewMcScenario(runId) {
+      if (!graphState || !mcResults?.runs) return;
+      const scenario = mcResults.runs.find(r => r.run_id === runId)
+        || mcResults.aggregate?.worst_scenarios?.find(r => r.run_id === runId);
+      if (!scenario) return;
+      if (!preMcPreviewSnapshot) preMcPreviewSnapshot = { data: JSON.parse(JSON.stringify(lastFullData)), graphState };
+      try {
+        const data = GraphCore.previewMonteCarloScenario(
+          graphState, [...disabledSet], null, getEngOpts(),
+          { ...scenario, use_cascade: true, trip_threshold: getMcOpts().tripThreshold }
+        );
+        mcPreviewActive = true;
+        cascadeActive = true;
+        selectedMcRunId = runId;
+        clearMcHighlights();
+        applyResult(data, false);
+        renderCascadePanel(data);
+        renderMonteCarloPanels(mcResults);
+      } catch (e) { showError(e.message); }
+    }
+
+    function resetMcPreview() {
+      if (!preMcPreviewSnapshot) return;
+      mcPreviewActive = false;
+      cascadeActive = false;
+      selectedMcRunId = null;
+      const snap = preMcPreviewSnapshot;
+      preMcPreviewSnapshot = null;
+      graphState = snap.graphState;
+      applyResult(snap.data, false);
+      renderCascadePanel(null);
+    }
+
+    async function runMonteCarlo() {
+      if (!graphState || mcRunning) return;
+      mcRunning = true;
+      mcCancel = false;
+      mcResults = { runs: [], aggregate: null, pareto: null };
+      selectedMcRunId = null;
+      clearMcHighlights();
+      if (mcPreviewActive) resetMcPreview();
+      document.getElementById("mc-run-btn").disabled = true;
+      document.getElementById("mc-stop-btn").disabled = false;
+      const mcOpts = getMcOpts();
+      const batchSize = mcOpts.runs <= 100 ? mcOpts.runs : 50;
+      let completed = 0;
+      updateMcProgress(0, mcOpts.runs);
+      try {
+        while (completed < mcOpts.runs && !mcCancel) {
+          const batch = GraphCore.runMonteCarloBatch(
+            stateWithDisables(), [...disabledSet], getEngOpts(), mcOpts,
+            { startRun: completed, count: batchSize }
+          );
+          mcResults.runs.push(...batch.runs);
+          completed = batch.progress.completed;
+          mcResults.aggregate = GraphCore.aggregateMonteCarloRuns(mcResults.runs);
+          updateMcProgress(completed, mcOpts.runs);
+          renderMonteCarloPanels(mcResults);
+          if (completed < mcOpts.runs) await yieldToUi();
+        }
+      } catch (e) { showError(e.message); }
+      finally {
+        mcRunning = false;
+        document.getElementById("mc-run-btn").disabled = !graphState;
+        document.getElementById("mc-stop-btn").disabled = true;
+        document.getElementById("mc-reset-btn").disabled = !mcResults?.runs?.length;
+      }
+      if (!mcCancel && mcResults?.runs?.length) {
+        document.getElementById("mc-progress-text").textContent = "Pareto…";
+        await yieldToUi();
+        try {
+          mcResults.pareto = GraphCore.computeParetoRecommendations(
+            stateWithDisables(), [...disabledSet], getEngOpts(), mcOpts, mcResults.aggregate
+          );
+          renderMonteCarloPanels(mcResults);
+        } catch (e) { showError(e.message); }
+        document.getElementById("mc-progress-text").textContent = `${mcResults.runs.length} runs · готово`;
+      }
+    }
+
+    function resetMonteCarlo() {
+      mcCancel = true;
+      mcRunning = false;
+      mcResults = null;
+      clearMcHighlights();
+      if (mcPreviewActive) resetMcPreview();
+      preMcPreviewSnapshot = null;
+      renderMonteCarloPanels(null);
+      updateMcProgress(0, 0);
+      if (baselineRawData) applyResult(baselineRawData, false);
+      document.getElementById("mc-reset-btn").disabled = true;
+    }
+
+    document.querySelectorAll(".preset-row button").forEach(b => {
+      b.addEventListener("click", () => {
+        document.querySelectorAll(".preset-row button").forEach(x => x.classList.remove("active"));
+        b.classList.add("active");
+        document.getElementById("n_stations").value = b.dataset.n;
+        document.getElementById("edge_mode").value = "top_risk";
+      });
+    });
+    document.getElementById("generate-btn").addEventListener("click", generate);
+    document.getElementById("dc-n1-btn").addEventListener("click", runDcN1);
+    document.getElementById("cascade-run-btn").addEventListener("click", runCascade);
+    document.getElementById("cascade-reset-btn").addEventListener("click", resetCascade);
+    document.getElementById("mc-run-btn").addEventListener("click", runMonteCarlo);
+    document.getElementById("mc-stop-btn").addEventListener("click", () => { mcCancel = true; });
+    document.getElementById("mc-reset-btn").addEventListener("click", resetMonteCarlo);
+    document.getElementById("toggle-panels-btn").addEventListener("click", () => {
+      document.body.classList.toggle("graph-only");
+      setTimeout(() => map?.invalidateSize(), 120);
+    });
+    ["filter-voltage", "filter-type", "filter-top-risk", "filter-scenario-only", "filter-pareto-only", "edge_mode", "flow_threshold"].forEach(id => {
+      document.getElementById(id).addEventListener("change", () => graphState && redrawFiltered(false));
+    });
+    document.querySelectorAll(".type-f, .status-f").forEach(el => el.addEventListener("change", () => graphState && scheduleRebalance()));
+
+    (async () => {
+      if (typeof L === "undefined") { showError("Leaflet не загрузился"); return; }
+      if (typeof GraphCore === "undefined") { showError("graph_core.js не загружен"); return; }
+      initMap();
+      try {
+        solarPool = await loadSolarPool();
+        const src = solarPool.length > 200 ? "vde-map" : solarPool.length ? "sample" : "fallback";
+        document.getElementById("pool-hint").textContent = `Пул: ${solarPool.length} СЭС (${src})`;
+      } catch (_) {
+        document.getElementById("pool-hint").textContent = "Реестр недоступен — SYNTHETIC_FALLBACK";
+        solarPool = [];
+      }
+      document.getElementById("generate-btn").disabled = false;
+    })();
+  </script>
+</body>
+</html>
