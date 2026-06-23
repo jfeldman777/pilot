@@ -61,6 +61,11 @@ def eng_large_map_page():
     return send_from_directory(ROOT, "eng-large-map.html")
 
 
+@app.get("/readme.html")
+def readme_page():
+    return send_from_directory(ROOT, "readme.html")
+
+
 @app.get("/<path:path>")
 def static_files(path):
     return send_from_directory(ROOT, path)
