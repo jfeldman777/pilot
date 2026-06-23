@@ -71,6 +71,11 @@ def roadmap_page():
     return send_from_directory(ROOT, "roadmap.html")
 
 
+@app.get("/backend-demo.html")
+def backend_demo_page():
+    return send_from_directory(ROOT, "backend-demo.html")
+
+
 @app.get("/architecture.html")
 def architecture_page():
     return send_from_directory(ROOT, "architecture.html")

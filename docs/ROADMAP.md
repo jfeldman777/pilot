@@ -108,3 +108,4 @@ Batch до 50k (Node worker) →     10⁶+ + TimescaleDB
 | 17 | API demo UI | `api-demo.html` |
 | 18 | Batch results viewer | `batch-results.html` · `data/batch/latest_summary.json` |
 | 19 | Calibration loop stub | `GET /calibration/status` |
+| 20 | Backend demo hub + testing guide | `backend-demo.html` · `TESTING_GUIDE.md` § фаза 3 |

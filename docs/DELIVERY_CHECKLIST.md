@@ -53,7 +53,10 @@
 
 ## Фаза 3 (backend scaffold)
 
+Точка входа: **backend-demo.html** · подробный чеклист: **TESTING_GUIDE.md** § «Фаза 3».
+
 ```text
+[ ] backend-demo.html открывается, ссылки на API / batch / architecture
 [ ] uvicorn api.main:app --port 8000 → /health pandapower:true
 [ ] api-demo.html → POST /dc-run converged
 [ ] node scripts/run_mc_batch.mjs 100 42 → latest_summary.json
@@ -68,7 +71,7 @@
 Локально:  http://127.0.0.1:5001/start.html
 Деплой:    <ваш URL>/start.html
 Автодемо:  eng-large-map.html?demo=1
-README:    readme.html · roadmap.html · architecture.html
+README:    readme.html · roadmap.html · backend-demo.html
 ```
 
 ## Если «песочные часы» на кнопках

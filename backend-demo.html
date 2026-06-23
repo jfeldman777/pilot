@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Backend demo — фаза 3</title>
+  <link rel="stylesheet" href="home-nav.css">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", Arial, sans-serif;
+      margin: 0;
+      min-height: 100vh;
+      background: linear-gradient(160deg, #e3f2fd 0%, #f5f6f8 50%, #e8eaf6 100%);
+      color: #222;
+      line-height: 1.55;
+    }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 56px 20px 48px; }
+    h1 { font-size: 1.65rem; color: #1565c0; margin: 0 0 8px; }
+    .sub { color: #555; font-size: 14px; margin-bottom: 20px; }
+    .disclaimer {
+      background: #ffebee;
+      border: 1px solid #ef9a9a;
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-size: 12px;
+      color: #b71c1c;
+      font-weight: 600;
+      margin-bottom: 22px;
+    }
+    .note {
+      background: #fff8e1;
+      border: 1px solid #ffe082;
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-size: 12px;
+      color: #6d4c00;
+      margin-bottom: 22px;
+    }
+    .steps { display: flex; flex-direction: column; gap: 14px; margin-bottom: 24px; }
+    .step {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 16px 18px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    .step h2 { margin: 0 0 8px; font-size: 15px; color: #283593; }
+    .step p { margin: 0 0 10px; font-size: 13px; color: #444; }
+    .cmd {
+      background: #263238;
+      color: #eceff1;
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      overflow-x: auto;
+      margin: 8px 0;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .cmd-label { font-size: 11px; font-weight: 600; color: #666; margin-top: 6px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 20px 0; }
+    .card {
+      display: block;
+      background: #fff;
+      border: 2px solid #5c6bc0;
+      border-radius: 10px;
+      padding: 14px 16px;
+      text-decoration: none;
+      color: #283593;
+      font-weight: 600;
+      font-size: 14px;
+      text-align: center;
+      transition: box-shadow 0.15s;
+    }
+    .card:hover { box-shadow: 0 4px 14px rgba(92, 107, 192, 0.25); }
+    .card small { display: block; font-weight: 400; font-size: 11px; color: #666; margin-top: 6px; }
+    .card.primary { background: linear-gradient(180deg, #5c6bc0 0%, #3949ab 100%); color: #fff; border-color: #3949ab; }
+    .card.primary small { color: rgba(255,255,255,0.85); }
+    .links { margin-top: 24px; font-size: 13px; text-align: center; }
+    .links a { color: #1565c0; font-weight: 600; text-decoration: none; margin: 0 8px; }
+    .links a:hover { text-decoration: underline; }
+    .time { text-align: center; font-size: 12px; color: #888; margin-top: 8px; }
+    ul.check { margin: 8px 0 0; padding-left: 20px; font-size: 13px; color: #444; }
+  </style>
+</head>
+<body>
+  <a href="start.html" class="home-btn" title="Начните здесь">⌂</a>
+  <div class="wrap">
+    <h1>Backend demo — фаза 3</h1>
+    <p class="sub">API pandapower · batch War-Gaming · архитектура. ~10 мин. Главный demo по-прежнему — <a href="eng-large-map.html?demo=1">режим 8</a>.</p>
+
+    <div class="disclaimer">
+      SYNTHETIC screening · NOT operational. PostgreSQL в compose — заготовка, приложение к БД пока не пишет.
+    </div>
+
+    <div class="note">
+      Нужны <b>два терминала</b>: (1) UI <code>python app.py</code> · (2) API <code>uvicorn api.main:app --port 8000</code>.
+      Batch — третий терминал, только Node.js.
+    </div>
+
+    <div class="cards">
+      <a href="api-demo.html" class="card primary">API demo<small>POST /dc-run · Health</small></a>
+      <a href="batch-results.html" class="card">Batch results<small>latest_summary.json</small></a>
+      <a href="architecture.html" class="card">Architecture<small>схема слоёв</small></a>
+      <a href="http://127.0.0.1:8000/docs" class="card" target="_blank" rel="noopener">OpenAPI /docs<small>порт 8000</small></a>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <h2>1. UI (терминал A)</h2>
+        <p>Раздача статики и страниц demo.</p>
+        <div class="cmd-label">Команда</div>
+        <div class="cmd">pip install flask
+python app.py</div>
+        <p>Откройте эту страницу: <a href="backend-demo.html">backend-demo.html</a> · порт <b>5001</b></p>
+      </div>
+
+      <div class="step">
+        <h2>2. API v2 (терминал B)</h2>
+        <p>FastAPI + pandapower DC screening.</p>
+        <div class="cmd-label">Установка и запуск</div>
+        <div class="cmd">pip install -r api/requirements.txt
+python -m uvicorn api.main:app --port 8000</div>
+        <ul class="check">
+          <li><a href="api-demo.html">api-demo.html</a> → <b>Health</b> → <code>"pandapower": true</code></li>
+          <li><b>Load example</b> → <b>POST /dc-run</b> → <code>"converged": true</code></li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <h2>3. Batch War-Gaming (терминал C)</h2>
+        <p>Прогоны вне браузера — TSO 100 узлов, до 50k runs.</p>
+        <div class="cmd-label">Быстрый smoke (100 runs)</div>
+        <div class="cmd">node scripts/run_mc_batch.mjs 100 42</div>
+        <div class="cmd-label">Демо для заказчика (1000 runs)</div>
+        <div class="cmd">node scripts/run_mc_batch.mjs 1000 42</div>
+        <p>Затем откройте <a href="batch-results.html">batch-results.html</a> — поля <code>runs</code>, <code>worst_damage</code>, <code>pareto</code>.</p>
+      </div>
+
+      <div class="step">
+        <h2>4. Архитектура и roadmap</h2>
+        <p>Что сделано в фазе 3 и что остаётся на этап 4 (БД, workers, интеграция с режимом 8).</p>
+        <p><a href="architecture.html">architecture.html</a> · <a href="roadmap.html">roadmap.html</a> · <a href="TESTING_GUIDE.md">TESTING_GUIDE.md</a> § фаза 3</p>
+      </div>
+
+      <div class="step">
+        <h2>5. Docker (опционально)</h2>
+        <p>Всё в одном: web + api + postgres (БД пока не используется кодом).</p>
+        <div class="cmd">docker compose up --build</div>
+        <p>UI :5001 · API :8000 · Postgres :5432 (user <code>mvp</code> / db <code>scenarios</code>)</p>
+      </div>
+    </div>
+
+    <p class="time">Полный чеклист тестировщика — TESTING_GUIDE.md, раздел «Фаза 3»</p>
+
+    <div class="links">
+      <a href="start.html">← Начните здесь</a>
+      <a href="eng-large-map.html?demo=1">★ Режим 8</a>
+      <a href="home.html">Все режимы</a>
+    </div>
+  </div>
+</body>
+</html>

@@ -125,11 +125,68 @@
 
 ---
 
+## Фаза 3 — Backend scaffold (~10 мин)
+
+**Не заменяет** главный demo path (режим 8). Проверяет отдельный контур: API + batch + документация.
+
+**Точка входа в UI:** http://127.0.0.1:5001/backend-demo.html
+
+### Подготовка
+
+```bash
+# Терминал A — UI
+pip install flask
+python app.py
+
+# Терминал B — API
+pip install -r api/requirements.txt
+python -m uvicorn api.main:app --port 8000
+```
+
+Node.js нужен только для batch (терминал C).
+
+### Чеклист
+
+| # | Шаг | Действие | Ожидание |
+|---|-----|----------|----------|
+| B1 | Hub | Открыть `/backend-demo.html` | Карточки API / Batch / Architecture, команды |
+| B2 | Health | `api-demo.html` → **Health** | JSON: `"ok": true`, `"pandapower": true` |
+| B3 | DC run | **Load example** → **POST /dc-run** | `"converged": true`, `line_results` не пустой |
+| B4 | OpenAPI | http://127.0.0.1:8000/docs | Swagger UI, эндпоинты `/health`, `/dc-run`, `/calibration/status` |
+| B5 | Calibration stub | В `/docs` → GET `/calibration/status` | `"status": "design_stub"`, описание цикла |
+| B6 | Batch | `node scripts/run_mc_batch.mjs 100 42` | Exit 0, путь к CSV и `latest_summary.json` |
+| B7 | Batch UI | `/batch-results.html` | JSON: `runs: 100`, `worst_damage`, `pareto[]` |
+| B8 | Architecture | `/architecture.html` | Рендер `ARCHITECTURE.md`, схема слоёв |
+| B9 | Roadmap | `/roadmap.html` | Секция «Фаза 3 (реализовано)» |
+
+### Опционально
+
+- [ ] `docker compose up --build` — web :5001, api :8000, postgres :5432 стартуют без ошибок
+- [ ] `node scripts/run_mc_batch.mjs 1000 42` — завершается за разумное время (&lt;2 мин на типичном ПК)
+
+### Что НЕ проверяем в фазе 3
+
+- Режим 8 **не** вызывает pandapower API (два параллельных контура — задумано).
+- PostgreSQL **не** получает данные от batch/API.
+- Batch не обязан быть прогнан перед показом — достаточно B6–B7 один раз.
+
+### Типичные сбои
+
+| Симптом | Причина | Решение |
+|---------|---------|---------|
+| `Failed to fetch` в api-demo | API не запущен | Терминал B: uvicorn |
+| `pandapower: false` | Не установлен пакет | `pip install -r api/requirements.txt` |
+| batch-results «Нет batch» | Не запускали скрипт | `node scripts/run_mc_batch.mjs 100 42` |
+| `node` не найден | Нет Node.js | Установить Node 18+ или пропустить B6–B7 |
+
+---
+
 ## Регрессия после изменений
 
 1. Пройти smoke-test (таблица выше).
 2. Главный demo path (режим 8).
-3. Режим 6: MC 100 → worst → Pareto 3 (как в `docs/TESTING_GUIDE_6_3.md`).
-4. Режим 1: базовая генерация (как в `docs/TESTING_GUIDE_5_2.md`).
+3. **Фаза 3** (опционально): `backend-demo.html` + чеклист B1–B8.
+4. Режим 6: MC 100 → worst → Pareto 3 (как в `docs/TESTING_GUIDE_6_3.md`).
+5. Режим 1: базовая генерация (как в `docs/TESTING_GUIDE_5_2.md`).
 
 Детальные пошаговые сценарии по версиям — в `docs/TESTING_GUIDE_*.md`.

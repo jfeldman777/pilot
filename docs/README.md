@@ -51,7 +51,7 @@ python app.py
 
 Откроется http://127.0.0.1:5001 — **начните с [start.html](http://127.0.0.1:5001/start.html)** (самостоятельный просмотр ~7 мин).
 
-Документация: [readme.html](http://127.0.0.1:5001/readme.html) · [roadmap.html](http://127.0.0.1:5001/roadmap.html) · [architecture.html](http://127.0.0.1:5001/architecture.html) (фаза 3).
+Документация: [readme.html](http://127.0.0.1:5001/readme.html) · [roadmap.html](http://127.0.0.1:5001/roadmap.html) · [backend-demo.html](http://127.0.0.1:5001/backend-demo.html) (фаза 3).
 
 Расчёты в браузере — `graph_core.js`. **Фаза 3:** отдельный расчётный API (pandapower DC) и batch War-Gaming вне браузера.
 
@@ -138,8 +138,9 @@ Web :5001 · API :8000 · PostgreSQL :5432 (заготовка под сцена
 
 | Документ | Назначение |
 |----------|------------|
-| `TESTING_GUIDE.md` | Полный чеклист проверки всех 8 режимов |
+| `TESTING_GUIDE.md` | Чеклист 8 режимов + **фаза 3** (~10 мин) |
 | `DELIVERY_CHECKLIST.md` | Быстрый чеклист перед отправкой заказчику |
+| `backend-demo.html` | Hub: команды запуска API, batch, ссылки |
 | `ROADMAP.md` / `roadmap.html` | Соответствие ТЗ заказчика и этапы 2–4 |
 | `ARCHITECTURE.md` / `architecture.html` | Архитектура: браузер → API → batch → агент (фаза 3) |
 | `api-demo.html` | Интерактивный вызов `POST /dc-run` |
