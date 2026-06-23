@@ -3361,11 +3361,13 @@
     if (!c) return;
     const initialEdge = c.initialOutageEdge;
     const initialNode = c.initialOutageNode;
+    const initialEdges = new Set(c.initialOutageEdges || (initialEdge ? [initialEdge] : []));
+    const initialNodes = new Set(c.initialOutageNodes || (initialNode != null ? [initialNode] : []));
     const tripped = new Set(c.cascadeTrippedEdges || []);
 
     for (const node of base.nodes) {
       const v = node.id;
-      if (initialNode != null && v === initialNode) {
+      if (initialNodes.has(v)) {
         node.cascade_initial_outage = true;
         node.borderWidth = 5;
         node.color = {
@@ -3388,7 +3390,7 @@
     for (const edge of base.edges) {
       const [u, v] = String(edge.id).split("-").map(Number);
       const ek = edgeKey(u, v);
-      if (initialEdge && ek === initialEdge) {
+      if (initialEdges.has(ek)) {
         edge.cascade_initial_outage = true;
         edge.color = { color: "#000000", highlight: "#333333" };
         edge.width = 5;
@@ -3621,40 +3623,87 @@
     };
   }
 
-  function runDCCascade(stateJson, baseDisabledList = [], positions = null, engOpts = {}, cascadeOpts = {}) {
-    const tripThreshold = +cascadeOpts.tripThreshold || 120;
-    const maxSteps = +cascadeOpts.maxSteps || 10;
-    const initialOutage = cascadeOpts.initialOutage;
-    if (!initialOutage || !initialOutage.kind) {
-      throw new Error("Выберите стартовый отказ: кликните узел или линию на схеме");
-    }
+  function mcObjectKey(obj) {
+    if (obj.kind === "node") return `node:${obj.id}`;
+    return `edge:${obj.edgeKey || obj.key}`;
+  }
 
-    const state = stateFromJson(stateJson);
-    initEngineeringState(state, state.params.seed);
-    const G = stateToGraph(state);
+  function computeDamageScore(metrics) {
+    return (
+      (metrics.unserved_load_mw || 0)
+      + (metrics.critical_unserved_count || 0) * 100
+      + (metrics.failed_assets_count || 0) * 5
+      + (metrics.cascade_steps || 0) * 2
+    );
+  }
+
+  function buildMonteCarloAssetPool(state, G, protectedKeys = new Set()) {
     const n = G.n;
-    const baseDisabled = new Set(baseDisabledList.map(Number));
-    const userDisabledEdges = edgeKeySet(state.disabled_edges);
+    const pool = [];
+    for (const v of G.nodes()) {
+      const key = `node:${v}`;
+      if (protectedKeys.has(key)) continue;
+      const role = state.roles[v];
+      const atype = state.node_types?.[v] ?? assetTypeFromRole(role);
+      pool.push({
+        kind: "node",
+        id: v,
+        key,
+        label: `${nodeName(v, n)} (#${v})`,
+        type: atype,
+      });
+    }
+    const edgeTypes = state.edge_types || {};
+    for (const [u, v] of G.edges) {
+      const ek = edgeKey(u, v);
+      const key = `edge:${ek}`;
+      if (protectedKeys.has(key)) continue;
+      const et = edgeTypes[ek] || "line";
+      pool.push({
+        kind: "edge",
+        edgeKey: ek,
+        key,
+        label: `${nodeName(u, n)}-${nodeName(v, n)}`,
+        type: et,
+      });
+    }
+    return pool;
+  }
+
+  function simulateScenarioCore(state, G, baseDisabled, userDisabledEdges, initialOutages, opts = {}) {
+    const tripThreshold = +opts.tripThreshold || 120;
+    const maxSteps = +opts.maxSteps || 10;
+    const useCascade = opts.useCascade !== false;
+    const workingDisabled = new Set(baseDisabled);
     const cascadeEdgeOff = new Set();
     const cascadeTrippedOnly = new Set();
-    const workingDisabled = new Set(baseDisabled);
+    const initialOutageNodes = [];
+    const initialOutageEdges = [];
+    const n = G.n;
+    const outageLabels = [];
 
-    let initialLabel = "";
-    if (initialOutage.kind === "node") {
-      workingDisabled.add(+initialOutage.id);
-      initialLabel = `${nodeName(initialOutage.id, n)} (#${initialOutage.id})`;
-    } else {
-      const ek = initialOutage.edgeKey || initialOutage.key;
-      cascadeEdgeOff.add(ek);
-      const [u, v] = ek.split(",").map(Number);
-      initialLabel = `${nodeName(u, n)}-${nodeName(v, n)}`;
+    for (const o of initialOutages || []) {
+      if (o.kind === "node") {
+        workingDisabled.add(+o.id);
+        initialOutageNodes.push(+o.id);
+        outageLabels.push(o.label || `${nodeName(+o.id, n)} (#${+o.id})`);
+      } else {
+        const ek = o.edgeKey || o.key;
+        cascadeEdgeOff.add(ek);
+        initialOutageEdges.push(ek);
+        const [u, v] = ek.split(",").map(Number);
+        outageLabels.push(o.label || `${nodeName(u, n)}-${nodeName(v, n)}`);
+      }
     }
 
-    const timeline = [{ step: 0, message: `initial outage ${initialLabel}` }];
+    const timeline = outageLabels.length
+      ? [{ step: 0, message: `initial outage ${outageLabels.join(", ")}` }]
+      : [];
+
     let iteration = 0;
     let stable = false;
     let dcSolvedFinal = false;
-    let stopReason = "unknown";
+    let stopReason = initialOutages?.length ? "unknown" : "no_outage";
     let lastDcFeas = { max_loading_percent: 0, capacity_violations_count: 0 };
 
     while (true) {
@@ -3662,14 +3711,26 @@
       for (const ek of cascadeEdgeOff) allOffEdges.add(ek);
 
       const dcResult = solveDCPowerFlow(G, state, workingDisabled, allOffEdges);
-
       if (!dcResult.solved) {
-        timeline.push({ step: iteration + 1, message: "DC solve failed — cascade stopped", dc_solved: false });
+        if (initialOutages?.length) {
+          timeline.push({ step: iteration + 1, message: "DC solve failed — cascade stopped", dc_solved: false });
+        }
         stopReason = "dc_failed";
         break;
       }
       dcSolvedFinal = true;
       lastDcFeas = analyzeDCFeasibility(G, dcResult.dcFlow || {}, state.edge_capacity, workingDisabled, allOffEdges);
+
+      if (!useCascade || !initialOutages?.length) {
+        stable = true;
+        stopReason = useCascade ? "stable" : "dc_only";
+        if (useCascade && initialOutages?.length) {
+          const ovText = "none";
+          timeline.push({ step: iteration + 1, message: `DC solved, overloads: ${ovText}`, overloads: [], dc_solved: true });
+          timeline.push({ step: iteration + 1, message: "stable, no overloads" });
+        }
+        break;
+      }
 
       const overloads = [];
       const dcFlow = dcResult.dcFlow || {};
@@ -3713,12 +3774,15 @@
         break;
       }
 
-      const tripped = overloads.map(o => {
+      overloads.forEach(o => {
         cascadeEdgeOff.add(o.edgeKey);
         cascadeTrippedOnly.add(o.edgeKey);
-        return o.label;
       });
-      timeline.push({ step: iteration + 1, message: `tripped ${tripped.join(", ")}`, tripped });
+      timeline.push({
+        step: iteration + 1,
+        message: `tripped ${overloads.map(o => o.label).join(", ")}`,
+        tripped: overloads.map(o => o.label),
+      });
       iteration++;
     }
 
@@ -3726,7 +3790,7 @@
     for (const ek of cascadeEdgeOff) finalOffEdges.add(ek);
     const { failed, served } = computeFlowsFromState(G, state, workingDisabled, finalOffEdges);
     const { served: baseServed } = computeFlowsFromState(G, state, baseDisabled, userDisabledEdges);
-    const unservedMw = lostLoadMw(state, G, served, baseServed, workingDisabled);
+    const unservedMw = Math.round(lostLoadMw(state, G, served, baseServed, workingDisabled) * 100) / 100;
 
     let criticalUnserved = 0;
     for (const v of G.nodes()) {
@@ -3736,35 +3800,290 @@
       }
     }
 
-    const cascadeVis = {
-      initialOutageEdge: initialOutage.kind === "edge" ? (initialOutage.edgeKey || initialOutage.key) : null,
-      initialOutageNode: initialOutage.kind === "node" ? +initialOutage.id : null,
-      cascadeTrippedEdges: [...cascadeTrippedOnly],
-      tripThreshold,
+    const failedAssets = workingDisabled.size + cascadeEdgeOff.size;
+    const metrics = {
+      cascade_steps: iteration,
+      failed_assets_count: failedAssets,
+      failed_edges: [...cascadeEdgeOff],
+      failed_nodes: [...workingDisabled].sort((a, b) => a - b),
+      max_loading_percent: lastDcFeas.max_loading_percent,
+      capacity_violations_count: lastDcFeas.capacity_violations_count,
+      unserved_load_mw: unservedMw,
+      critical_unserved_count: criticalUnserved,
+      dc_solved_final: dcSolvedFinal,
+      stable,
+      stop_reason: stopReason,
+      trip_threshold: tripThreshold,
     };
+    metrics.damage_score = Math.round(computeDamageScore(metrics) * 100) / 100;
 
-    const result = evaluateStateEngineering(state, workingDisabled, positions, {
+    return {
+      timeline,
+      metrics,
+      cascadeVis: {
+        initialOutageNodes,
+        initialOutageEdges,
+        cascadeTrippedEdges: [...cascadeTrippedOnly],
+        tripThreshold,
+      },
+      workingDisabled,
+      cascadeEdgeOff,
+      cascadeTrippedOnly,
+      initialOutages: (initialOutages || []).map(o => ({ ...o })),
+    };
+  }
+
+  function simulateMonteCarloRun(state, G, baseDisabled, userDisabledEdges, assetPool, mcOpts, runId) {
+    const maxK = +mcOpts.maxOutagesPerScenario || 1;
+    const rng = new Random((+mcOpts.seed || 42) + runId * 10007);
+    const k = rng.randint(1, Math.max(1, maxK));
+    const picks = assetPool.length ? rng.sample(assetPool, Math.min(k, assetPool.length)) : [];
+    const initialOutages = picks.map(p => (
+      p.kind === "node"
+        ? { kind: "node", id: p.id, label: p.label, type: p.type }
+        : { kind: "edge", edgeKey: p.edgeKey, label: p.label, type: p.type }
+    ));
+
+    const sim = simulateScenarioCore(state, G, baseDisabled, userDisabledEdges, initialOutages, {
+      tripThreshold: mcOpts.tripThreshold,
+      maxSteps: mcOpts.maxCascadeSteps || mcOpts.maxSteps || 10,
+      useCascade: mcOpts.useCascade !== false,
+    });
+
+    return {
+      run_id: runId,
+      outaged_objects: initialOutages.map(o => ({
+        kind: o.kind,
+        id: o.id,
+        edgeKey: o.edgeKey,
+        label: o.label,
+        type: o.type,
+        key: mcObjectKey(o),
+      })),
+      outaged_objects_label: initialOutages.map(o => o.label).join(", ") || "—",
+      ...sim.metrics,
+      stable: !!sim.metrics.stable,
+      timeline: sim.timeline,
+      cascadeVis: sim.cascadeVis,
+      initialOutages,
+    };
+  }
+
+  function aggregateMonteCarloRuns(runs, topWorstN = 10) {
+    if (!runs.length) {
+      return {
+        worst_scenarios: [],
+        object_frequency: [],
+        avg_damage_score: 0,
+        top_worst_keys: new Set(),
+      };
+    }
+    const sorted = [...runs].sort((a, b) => b.damage_score - a.damage_score);
+    const worst = sorted.slice(0, topWorstN);
+    const topWorstKeys = new Set();
+    const freqMap = new Map();
+
+    for (const run of worst) {
+      for (const o of run.outaged_objects || []) {
+        topWorstKeys.add(o.key || mcObjectKey(o));
+      }
+    }
+
+    for (const run of runs) {
+      for (const o of run.outaged_objects || []) {
+        const key = o.key || mcObjectKey(o);
+        if (!freqMap.has(key)) {
+          freqMap.set(key, {
+            key,
+            object: o.label,
+            type: o.type,
+            frequency_in_worst: 0,
+            critical_hits: 0,
+            damage_sum: 0,
+            damage_count: 0,
+          });
+        }
+        const rec = freqMap.get(key);
+        rec.damage_sum += run.damage_score;
+        rec.damage_count++;
+        if (topWorstKeys.has(key)) rec.frequency_in_worst++;
+        if (run.critical_unserved_count > 0) rec.critical_hits++;
+      }
+    }
+
+    const object_frequency = [...freqMap.values()]
+      .map(r => ({
+        key: r.key,
+        object: r.object,
+        type: r.type,
+        frequency_in_worst: r.frequency_in_worst,
+        critical_hits: r.critical_hits,
+        avg_damage_score: Math.round((r.damage_sum / r.damage_count) * 100) / 100,
+      }))
+      .sort((a, b) => b.frequency_in_worst - a.frequency_in_worst || b.avg_damage_score - a.avg_damage_score);
+
+    const avg_damage_score = Math.round(
+      (runs.reduce((s, r) => s + r.damage_score, 0) / runs.length) * 100
+    ) / 100;
+
+    return { worst_scenarios: worst, object_frequency, avg_damage_score, top_worst_keys: topWorstKeys };
+  }
+
+  function runMonteCarloBatch(stateJson, baseDisabledList = [], engOpts = {}, mcOpts = {}, batchOpts = {}) {
+    const startRun = +batchOpts.startRun || 0;
+    const count = +batchOpts.count || 1;
+    const totalRuns = +mcOpts.runs || 100;
+    const endRun = Math.min(startRun + count, totalRuns);
+
+    const state = stateFromJson(stateJson);
+    initEngineeringState(state, state.params.seed);
+    const G = stateToGraph(state);
+    const baseDisabled = new Set(baseDisabledList.map(Number));
+    const userDisabledEdges = edgeKeySet(state.disabled_edges);
+    const protectedKeys = new Set(mcOpts.protectedKeys || []);
+    const assetPool = buildMonteCarloAssetPool(state, G, protectedKeys);
+
+    const newRuns = [];
+    for (let runId = startRun; runId < endRun; runId++) {
+      newRuns.push(simulateMonteCarloRun(state, G, baseDisabled, userDisabledEdges, assetPool, mcOpts, runId + 1));
+    }
+
+    return {
+      runs: newRuns,
+      progress: { completed: endRun, total: totalRuns },
+      asset_pool_size: assetPool.length,
+    };
+  }
+
+  function computeParetoRecommendations(stateJson, baseDisabledList = [], engOpts = {}, mcOpts = {}, baselineAggregate) {
+    const topObjects = (baselineAggregate?.object_frequency || []).slice(0, 5);
+    const baselineAvg = baselineAggregate?.avg_damage_score || 0;
+    const paretoRuns = Math.min(+mcOpts.runs || 100, 200);
+    const recommendations = [];
+
+    for (const protectCount of [1, 3, 5]) {
+      const protectedKeys = topObjects.slice(0, protectCount).map(o => o.key);
+      if (!protectedKeys.length) {
+        recommendations.push({
+          protect_count: protectCount,
+          protected_objects: [],
+          damage_reduced_percent: 0,
+          baseline_avg_damage: baselineAvg,
+          protected_avg_damage: baselineAvg,
+        });
+        continue;
+      }
+      const allRuns = [];
+      let start = 0;
+      while (start < paretoRuns) {
+        const batch = runMonteCarloBatch(stateJson, baseDisabledList, engOpts, {
+          ...mcOpts,
+          runs: paretoRuns,
+          protectedKeys,
+        }, { startRun: start, count: 50 });
+        allRuns.push(...batch.runs);
+        start = batch.progress.completed;
+      }
+      const agg = aggregateMonteCarloRuns(allRuns);
+      const reduction = baselineAvg > 0
+        ? Math.round(((baselineAvg - agg.avg_damage_score) / baselineAvg) * 1000) / 10
+        : 0;
+      recommendations.push({
+        protect_count: protectCount,
+        protected_objects: topObjects.slice(0, protectCount).map(o => o.object),
+        damage_reduced_percent: Math.max(0, reduction),
+        baseline_avg_damage: baselineAvg,
+        protected_avg_damage: agg.avg_damage_score,
+        pareto_runs: paretoRuns,
+      });
+    }
+    return recommendations;
+  }
+
+  function previewMonteCarloScenario(stateJson, baseDisabledList = [], positions = null, engOpts = {}, scenarioRun = {}) {
+    const state = stateFromJson(stateJson);
+    initEngineeringState(state, state.params.seed);
+    const G = stateToGraph(state);
+    const baseDisabled = new Set(baseDisabledList.map(Number));
+    const userDisabledEdges = edgeKeySet(state.disabled_edges);
+    const initialOutages = scenarioRun.initialOutages
+      || (scenarioRun.outaged_objects || []).map(o => (
+        o.kind === "node"
+          ? { kind: "node", id: o.id, label: o.label }
+          : { kind: "edge", edgeKey: o.edgeKey, label: o.label }
+      ));
+
+    const sim = simulateScenarioCore(state, G, baseDisabled, userDisabledEdges, initialOutages, {
+      tripThreshold: scenarioRun.trip_threshold || engOpts.tripThreshold || 120,
+      maxSteps: scenarioRun.max_cascade_steps || 10,
+      useCascade: scenarioRun.use_cascade !== false,
+    });
+
+    const result = evaluateStateEngineering(state, sim.workingDisabled, positions, {
       ...engOpts,
-      flowMode: "dc",
-      cascade: cascadeVis,
-      cascadeDisabledEdgeSet: cascadeEdgeOff,
+      flowMode: engOpts.flowMode || "dc",
+      cascade: sim.cascadeVis,
+      cascadeDisabledEdgeSet: sim.cascadeEdgeOff,
     });
 
     result.dc_cascade = {
-      timeline,
+      timeline: scenarioRun.timeline || sim.timeline,
       metrics: {
-        cascade_steps: iteration,
+        ...sim.metrics,
+        initial_outage: scenarioRun.outaged_objects_label || initialOutages.map(o => o.label).join(", "),
+      },
+      cascade_active: true,
+      monte_carlo_preview: true,
+      run_id: scenarioRun.run_id,
+    };
+    result.monte_carlo_scenario = scenarioRun;
+    result.monte_carlo_disclaimer =
+      "Monte Carlo demo on synthetic network. Damage score and Pareto recommendations are screening metrics, not operational decisions.";
+    return result;
+  }
+
+  function runDCCascade(stateJson, baseDisabledList = [], positions = null, engOpts = {}, cascadeOpts = {}) {
+    const tripThreshold = +cascadeOpts.tripThreshold || 120;
+    const maxSteps = +cascadeOpts.maxSteps || 10;
+    const initialOutage = cascadeOpts.initialOutage;
+    if (!initialOutage || !initialOutage.kind) {
+      throw new Error("Выберите стартовый отказ: кликните узел или линию на схеме");
+    }
+
+    const state = stateFromJson(stateJson);
+    initEngineeringState(state, state.params.seed);
+    const G = stateToGraph(state);
+    const n = G.n;
+    const baseDisabled = new Set(baseDisabledList.map(Number));
+    const userDisabledEdges = edgeKeySet(state.disabled_edges);
+
+    let initialLabel = "";
+    if (initialOutage.kind === "node") {
+      initialLabel = `${nodeName(initialOutage.id, n)} (#${initialOutage.id})`;
+    } else {
+      const ek = initialOutage.edgeKey || initialOutage.key;
+      const [u, v] = ek.split(",").map(Number);
+      initialLabel = `${nodeName(u, n)}-${nodeName(v, n)}`;
+    }
+
+    const sim = simulateScenarioCore(
+      state, G, baseDisabled, userDisabledEdges,
+      [{ ...initialOutage, label: initialLabel }],
+      { tripThreshold, maxSteps, useCascade: true }
+    );
+
+    const result = evaluateStateEngineering(state, sim.workingDisabled, positions, {
+      ...engOpts,
+      flowMode: "dc",
+      cascade: sim.cascadeVis,
+      cascadeDisabledEdgeSet: sim.cascadeEdgeOff,
+    });
+
+    result.dc_cascade = {
+      timeline: sim.timeline,
+      metrics: {
+        ...sim.metrics,
         initial_outage: initialLabel,
-        failed_assets_count: workingDisabled.size + cascadeEdgeOff.size,
-        failed_edges: [...cascadeEdgeOff],
-        failed_nodes: [...workingDisabled].sort((a, b) => a - b),
-        max_loading_percent: lastDcFeas.max_loading_percent,
-        unserved_load_mw: unservedMw,
-        critical_unserved_count: criticalUnserved,
-        dc_solved_final: dcSolvedFinal,
-        stable,
-        stop_reason: stopReason,
-        trip_threshold: tripThreshold,
       },
       cascade_active: true,
     };
@@ -3987,6 +4306,11 @@
     scanDcN1Scenarios,
     applyDcN1Scenario,
     runDCCascade,
+    runMonteCarloBatch,
+    aggregateMonteCarloRuns,
+    computeParetoRecommendations,
+    previewMonteCarloScenario,
+    computeDamageScore,
     initEngineeringState,
   };
 })(typeof window !== "undefined" ? window : globalThis);
