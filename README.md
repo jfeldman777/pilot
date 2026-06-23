@@ -78,6 +78,7 @@ node scripts/run_mc_batch.mjs 1000 42
 ### Docker (фаза 3)
 
 ```bash
+cp .env.example .env   # задайте локальный пароль Postgres (файл .env не в git)
 docker compose up --build
 ```
 

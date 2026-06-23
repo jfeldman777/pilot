@@ -148,8 +148,9 @@ python -m uvicorn api.main:app --port 8000</div>
       <div class="step">
         <h2>5. Docker (опционально)</h2>
         <p>Всё в одном: web + api + postgres (БД пока не используется кодом).</p>
-        <div class="cmd">docker compose up --build</div>
-        <p>UI :5001 · API :8000 · Postgres :5432 (user <code>mvp</code> / db <code>scenarios</code>)</p>
+        <div class="cmd">cp .env.example .env
+docker compose up --build</div>
+        <p>UI :5001 · API :8000 · Postgres :5432 — пароль в локальном <code>.env</code> (см. <code>.env.example</code>)</p>
       </div>
     </div>
 

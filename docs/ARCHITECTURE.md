@@ -69,7 +69,7 @@ docker compose up --build
 
 - UI: http://127.0.0.1:5001/start.html  
 - API docs: http://127.0.0.1:8000/docs  
-- Postgres: `localhost:5432` user `mvp` / `mvp_demo` / db `scenarios`
+- Postgres: `localhost:5432` — см. `.env.example` (пароль только в локальном `.env`, не в git)
 
 ## API v2
 

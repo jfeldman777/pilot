@@ -6,3 +6,4 @@ flow_graph.png
 all_stations.js
 _vde_page.html
 data/batch/mc_batch_*.csv
+.env

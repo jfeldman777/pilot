@@ -78,6 +78,7 @@ node scripts/run_mc_batch.mjs 1000 42
 ### Docker (фаза 3)
 
 ```bash
+cp .env.example .env   # задайте локальный пароль Postgres (файл .env не в git)
 docker compose up --build
 ```
 
@@ -146,6 +147,7 @@ Web :5001 · API :8000 · PostgreSQL :5432 (заготовка под сцена
 | `api-demo.html` | Интерактивный вызов `POST /dc-run` |
 | `batch-results.html` | Просмотр последнего batch War-Gaming |
 | `start.html` | Точка входа для самостоятельного просмотра |
+| `CUSTOMER_LETTER.md` | Текст письма заказчику (браузер vs сервер) |
 | `docs/TESTING_GUIDE_5_2.md` … `6_3.md` | Детальные сценарии по версиям |
 
 ## 10. Следующие шаги (после демо)
