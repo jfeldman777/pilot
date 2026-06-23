@@ -4,29 +4,6 @@
 
 ---
 
-## Для Telegram (скопируйте этот блок)
-
-    Добрый день!
-
-    MVP screening-симулятор сети (контур A1). Synthetic · not operational.
-
-    ▶ Вход и demo:
-    https://jfeldman777.github.io/pilot/
-
-    ▶ Письмо (что работает / чего нет):
-    https://jfeldman777.github.io/pilot/customer-letter.html
-
-    ▶ Сразу автодемо (~3 мин):
-    https://jfeldman777.github.io/pilot/eng-large-map.html?demo=1
-
-    ▶ Репозиторий:
-    https://github.com/jfeldman777/pilot
-
-    В браузере: War-Gaming, Pareto, режим 8 — без установки.
-    API / batch / Docker — только при развёртывании на сервере.
-
----
-
 Добрый день,
 
 Направляю демонстрационный MVP для оценки концепции **War-Gaming / screening устойчивости сети** (контур A1 — физическая безопасность).
@@ -36,8 +13,7 @@
 **Важно сразу:** все данные **synthetic**, модель **not operational** — это screening-прототип, а не операционный клон ОЭС и не инженерное заключение.
 
 **Репозиторий:** https://github.com/jfeldman777/pilot  
-**Вход (браузер):** https://jfeldman777.github.io/pilot/  
-**Письмо (читаемая версия):** https://jfeldman777.github.io/pilot/customer-letter.html
+**Вход (браузер):** https://jfeldman777.github.io/pilot/
 
 ---
 
