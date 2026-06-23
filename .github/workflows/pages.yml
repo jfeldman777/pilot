@@ -22,14 +22,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare static site
+      - name: Prepare static site (full browser demo)
         run: |
-          mkdir -p _site/data
-          cp home-nav.css map.html large.html large-map.html graph_core.js .nojekyll _site/
+          mkdir -p _site/data/batch
+          touch _site/.nojekyll
+          cp home-nav.css graph_core.js _site/
+          cp *.html _site/
+          cp README.md ROADMAP.md ARCHITECTURE.md TESTING_GUIDE.md CUSTOMER_LETTER.md _site/
           cp data/solar_sample.json _site/data/
-          cp index.html _site/small.html
-          cp home.html _site/index.html
-          cp home.html _site/home.html
+          cp data/batch/latest_summary.json _site/data/batch/ 2>/dev/null || true
+          cp start.html _site/index.html
       - uses: actions/configure-pages@v4
       - uses: actions/upload-pages-artifact@v3
         with:
