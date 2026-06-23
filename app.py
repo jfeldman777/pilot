@@ -23,7 +23,7 @@ def index_page():
 
 @app.get("/small.html")
 def small_page():
-    return send_from_directory(ROOT, "index.html")
+    return send_from_directory(ROOT, "small.html")
 
 
 @app.get("/home.html")

@@ -31,6 +31,9 @@ jobs:
           cp README.md ROADMAP.md ARCHITECTURE.md TESTING_GUIDE.md CUSTOMER_LETTER.md _site/
           cp data/solar_sample.json _site/data/
           cp data/batch/latest_summary.json _site/data/batch/ 2>/dev/null || true
+          # Явно: корень сайта = хаб (не режим 1 / small.html)
+          cp index.html _site/index.html
+          grep -q "Самостоятельный просмотр" _site/index.html
       - uses: actions/configure-pages@v4
       - uses: actions/upload-pages-artifact@v3
         with:
