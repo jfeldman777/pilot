@@ -342,6 +342,24 @@
       font-style: italic;
     }
 
+    .detail-card {
+      font-size: 12px; line-height: 1.55; background: #f5f5f5; border-radius: 6px;
+      padding: 10px 12px; border: 1px solid #e0e0e0;
+    }
+    .detail-card.empty { color: #999; font-style: italic; background: #fafafa; }
+    .detail-card dt { font-weight: 600; color: #444; margin-top: 6px; }
+    .detail-card dt:first-child { margin-top: 0; }
+    .detail-card dd { margin: 0 0 0 8px; color: #333; }
+
+    .risk-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .risk-table th, .risk-table td { padding: 4px 6px; border-bottom: 1px solid #eee; text-align: left; }
+    .risk-table th { color: #555; font-weight: 600; }
+    .risk-table tr.clickable { cursor: pointer; }
+    .risk-table tr.clickable:hover { background: #e8eaf6; }
+    .filter-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+    .filter-row .field { margin-bottom: 0; }
+    .filter-check { font-size: 12px; display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+
     .flows-list li {
       font-family: "Consolas", "Courier New", monospace;
       font-size: 11px;
@@ -386,7 +404,8 @@
     <h1>DC power flow</h1>
     <p id="sidebar-desc">Режим 5 из 8 · Инженерная · малый · схема</p>
     <div class="banner" style="margin:0 16px 10px;padding:8px 10px;background:#e8eaf6;border:1px solid #9fa8da;border-radius:6px;font-size:10px;line-height:1.4;color:#283593">
-      Engineering preview: DC power flow screening. Synthetic parameters. Not an operational grid model.
+      Engineering preview: DC power flow screening. Synthetic parameters. Not an operational grid model.<br>
+      Engineering attributes are synthetic. Risk score is a simplified screening metric, not an operational assessment.
     </div>
     <div class="sidebar-mode-tabs">
       <button type="button" id="mode-gen-btn" class="mode-tab active">Генерация</button>
@@ -454,6 +473,33 @@
         <button type="button" id="weakest-edge-btn" class="secondary" disabled>Самое слабое ребро</button>
         <button type="button" id="dc-n1-btn" class="secondary" disabled>DC N-1 анализ</button>
         <div class="weakest-hint" id="dc-n1-hint">N-1: поочерёдное отключение рёбер и пересчёт DC</div>
+        <div class="field" style="margin-top:14px">
+          <label>Фильтры на схеме</label>
+        </div>
+        <div class="filter-row">
+          <div class="field">
+            <label for="filter-voltage">Напряжение, kV</label>
+            <select id="filter-voltage">
+              <option value="">Все</option>
+              <option value="750">750</option>
+              <option value="330">330</option>
+              <option value="110">110</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="filter-type">Тип объекта</label>
+            <select id="filter-type">
+              <option value="">Все</option>
+              <option value="bus">bus</option>
+              <option value="generator">generator</option>
+              <option value="load">load</option>
+              <option value="substation">substation</option>
+              <option value="line">line</option>
+              <option value="transformer">transformer</option>
+            </select>
+          </div>
+        </div>
+        <label class="filter-check"><input type="checkbox" id="filter-top-risk"> Только top risk (топ-10)</label>
       </form>
     </div>
 
@@ -527,6 +573,22 @@
   <aside class="info-panel" id="app-info-panel">
     <h2>Состояние</h2>
     <div class="panel-section">
+      <h3>Выбранный объект</h3>
+      <dl class="detail-card empty" id="detail-card">Кликните узел или ребро на схеме</dl>
+    </div>
+    <div class="panel-section">
+      <h3>Top-10 risky objects</h3>
+      <p style="font-size:10px;color:#777;margin-bottom:6px;line-height:1.35">redundancy ≈ 1/degree · SYNTHETIC repair times</p>
+      <div style="overflow-x:auto">
+        <table class="risk-table">
+          <thead>
+            <tr><th>object</th><th>type</th><th>kV</th><th>impact</th><th>repair d</th><th>risk</th></tr>
+          </thead>
+          <tbody id="risk-table-body"><tr><td colspan="6">Сгенерируйте граф</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel-section">
       <h3>Отключены кликом <span class="count" id="manual-count">0</span></h3>
       <ul class="panel-list" id="manual-list"></ul>
     </div>
@@ -582,6 +644,11 @@
     const dcN1Btn = document.getElementById("dc-n1-btn");
     const dcN1Hint = document.getElementById("dc-n1-hint");
     const container = document.getElementById("graph");
+    const detailCard = document.getElementById("detail-card");
+    const riskTableBody = document.getElementById("risk-table-body");
+    const filterVoltageEl = document.getElementById("filter-voltage");
+    const filterTypeEl = document.getElementById("filter-type");
+    const filterTopRiskEl = document.getElementById("filter-top-risk");
 
     let network = null;
     let nodesDataset = null;
@@ -955,17 +1022,144 @@
       return best !== null ? nodeId(best) : null;
     }
 
+    let lastFullData = null;
+    let selectedObject = null;
+
+    function renderNodeDetail(node) {
+      selectedObject = { kind: "node", id: nodeId(node.id) };
+      detailCard.className = "detail-card";
+      const genLoad = node.asset_type === "generator"
+        ? `generation: ${node.generation_mw ?? 0} MW`
+        : node.asset_type === "load"
+          ? `load: ${node.load_mw ?? 0} MW`
+          : "—";
+      detailCard.innerHTML = `
+        <dt>Узел</dt><dd>${nodeLetter(node)} (#${node.id})</dd>
+        <dt>type</dt><dd>${node.asset_type || "—"}</dd>
+        <dt>voltage_level_kv</dt><dd>${node.voltage_level_kv ?? "—"}</dd>
+        <dt>generation / load</dt><dd>${genLoad}</dd>
+        <dt>θ</dt><dd>${node.theta != null ? node.theta : "—"}</dd>
+        <dt>repair_time_days</dt><dd>${node.repair_time_days ?? "—"} (${node.repair_time_source || "SYNTHETIC"})</dd>
+        <dt>risk_score</dt><dd>${node.risk_score ?? 0} · impact ${node.impact_mw ?? 0} MW · redundancy ${node.redundancy_factor ?? "—"}</dd>
+        <dt>slack</dt><dd>${node.is_slack ? "yes" : "no"}</dd>
+      `;
+    }
+
+    function renderEdgeDetail(edge) {
+      selectedObject = { kind: "edge", id: edge.id };
+      detailCard.className = "detail-card";
+      const et = edge.edge_type || "line";
+      const voltage = et === "transformer"
+        ? `${edge.from_voltage_kv ?? "?"} → ${edge.to_voltage_kv ?? "?"} kV`
+        : `${edge.voltage_level_kv ?? "—"} kV`;
+      detailCard.innerHTML = `
+        <dt>Ребро</dt><dd>${edge.label || edge.id}</dd>
+        <dt>type</dt><dd>${et}</dd>
+        <dt>voltage</dt><dd>${voltage}</dd>
+        <dt>capacity_mw</dt><dd>${edge.capacity_mw ?? "—"}</dd>
+        <dt>reactance</dt><dd>${edge.reactance ?? "—"}</dd>
+        <dt>dc_flow_mw</dt><dd>${edge.dc_flow_mw != null ? Math.round(edge.dc_flow_mw * 10) / 10 : "—"}</dd>
+        <dt>loading_percent</dt><dd>${edge.loading_percent ?? "—"}%</dd>
+        <dt>repair_time_days</dt><dd>${edge.repair_time_days ?? "—"} (${edge.repair_time_source || "SYNTHETIC"})</dd>
+        <dt>risk_score</dt><dd>${edge.risk_score ?? 0} · impact ${edge.impact_mw ?? 0} MW</dd>
+        ${edge.replacement_cost ? `<dt>replacement_cost</dt><dd>${edge.replacement_cost.toLocaleString("ru")} (SYNTHETIC)</dd>` : ""}
+      `;
+    }
+
+    function renderRiskTable(data) {
+      const rows = data?.top_risk_objects || [];
+      if (!rows.length) {
+        riskTableBody.innerHTML = "<tr><td colspan=\"6\">Нет данных</td></tr>";
+        return;
+      }
+      riskTableBody.innerHTML = rows.map(r => `
+        <tr class="clickable" data-kind="${r.kind}" data-ref="${r.kind === "node" ? r.id : (r.edgeKey || r.id)}">
+          <td>${r.object}</td>
+          <td>${r.type}</td>
+          <td>${r.voltage_kv}</td>
+          <td>${r.impact_mw}</td>
+          <td>${r.repair_time_days}</td>
+          <td><b>${r.risk_score}</b></td>
+        </tr>
+      `).join("");
+      riskTableBody.querySelectorAll("tr.clickable").forEach(tr => {
+        tr.addEventListener("click", () => {
+          const kind = tr.dataset.kind;
+          const ref = tr.dataset.ref;
+          if (!lastFullData) return;
+          if (kind === "node") {
+            const n = lastFullData.nodes.find(x => nodeId(x.id) === nodeId(ref));
+            if (n) { renderNodeDetail(n); focusOnNode(ref, 1.3); }
+          } else {
+            const e = lastFullData.edges.find(x => x.id === ref || edgeKeyFromVisId(x.id) === ref);
+            if (e) { renderEdgeDetail(e); focusOnEdge(e.id.includes("-") ? e.id.split("-").map(Number) : ref); }
+          }
+        });
+      });
+    }
+
+    function getVisFilters() {
+      return {
+        voltage: filterVoltageEl?.value || "",
+        assetType: filterTypeEl?.value || "",
+        topRiskOnly: !!filterTopRiskEl?.checked,
+      };
+    }
+
+    function filterVisData(data) {
+      const f = getVisFilters();
+      if (!f.voltage && !f.assetType && !f.topRiskOnly) return data;
+      const topSet = new Set((data.top_risk_objects || []).map(o =>
+        o.kind === "node" ? `n:${o.id}` : `e:${o.edgeKey}`
+      ));
+      const nodeTypes = new Set(["bus", "generator", "load", "substation"]);
+      const edgeTypes = new Set(["line", "transformer"]);
+      const nodes = data.nodes.map(n => {
+        let match = true;
+        if (f.voltage && String(n.voltage_level_kv) !== f.voltage) match = false;
+        if (f.assetType && nodeTypes.has(f.assetType) && n.asset_type !== f.assetType) match = false;
+        if (f.topRiskOnly && !topSet.has(`n:${nodeId(n.id)}`)) match = false;
+        if (f.assetType && edgeTypes.has(f.assetType)) match = false;
+        return match ? n : { ...n, opacity: 0.12 };
+      });
+      const edges = data.edges.map(e => {
+        let match = true;
+        const et = e.edge_type || "line";
+        const vtag = et === "transformer"
+          ? `${e.from_voltage_kv || ""}${e.to_voltage_kv || ""}`
+          : String(e.voltage_level_kv || "");
+        if (f.voltage && !vtag.includes(f.voltage)) match = false;
+        if (f.assetType && edgeTypes.has(f.assetType) && et !== f.assetType) match = false;
+        if (f.assetType && nodeTypes.has(f.assetType)) match = false;
+        if (f.topRiskOnly) {
+          const [u, v] = String(e.id).split("-").map(Number);
+          if (!topSet.has(`e:${edgeKey(u, v)}`)) match = false;
+        }
+        return match ? e : { ...e, opacity: 0.1 };
+      });
+      return { ...data, nodes, edges };
+    }
+
+    function visDataFromFull(data) {
+      const filtered = filterVisData(data);
+      return { nodes: filtered.nodes, edges: filtered.edges };
+    }
+
     function handleGraphTap(params) {
       if (didDrag || rebalancing) return;
       const now = Date.now();
       if (now - lastToggleAt < 350) return;
       if (params.edges && params.edges.length) {
+        const e = edgesDataset.get(params.edges[0]);
+        if (e) renderEdgeDetail(e);
         lastToggleAt = now;
         toggleEdge(params.edges[0]);
         return;
       }
       const id = nodeAtPointer(params);
       if (id !== null) {
+        const n = nodesDataset.get(id);
+        if (n) renderNodeDetail(n);
         lastToggleAt = now;
         toggleNode(id);
       }
@@ -1014,14 +1208,15 @@
       opts = opts || {};
       const shouldFit = opts.fit === true;
       const savedPositions = network && !shouldFit ? network.getPositions() : null;
+      const vis = visDataFromFull(data);
 
       nodeRoleColors = new Map();
       const nodeIds = nodesDataset.getIds();
       const edgeIds = edgesDataset.getIds();
       if (nodeIds.length) nodesDataset.remove(nodeIds);
       if (edgeIds.length) edgesDataset.remove(edgeIds);
-      nodesDataset.add(mergeSavedPositions(prepareNodeSizes(data.nodes), savedPositions));
-      edgesDataset.add(data.edges);
+      nodesDataset.add(mergeSavedPositions(prepareNodeSizes(vis.nodes), savedPositions));
+      edgesDataset.add(vis.edges);
       if (network) {
         network.unselectAll();
         network.redraw();
@@ -1040,8 +1235,9 @@
       const savedPositions = network.getPositions();
       const savedView = captureGraphView();
       nodeRoleColors = new Map();
+      const vis = visDataFromFull(data);
 
-      const nodes = mergeSavedPositions(prepareNodeSizes(data.nodes), savedPositions);
+      const nodes = mergeSavedPositions(prepareNodeSizes(vis.nodes), savedPositions);
       const existingIds = new Set(nodesDataset.getIds().map(nodeId));
       const nextIds = new Set(nodes.map(n => nodeId(n.id)));
 
@@ -1056,7 +1252,7 @@
 
       const edgeIds = edgesDataset.getIds();
       if (edgeIds.length) edgesDataset.remove(edgeIds);
-      edgesDataset.add(data.edges);
+      edgesDataset.add(vis.edges);
 
       network.unselectAll();
       network.redraw();
@@ -1159,7 +1355,7 @@
         try {
           await new Promise((resolve, reject) => {
             const s = document.createElement("script");
-            s.src = path + "?v=10";
+            s.src = path + "?v=12";
             s.onload = resolve;
             s.onerror = reject;
             document.head.appendChild(s);
@@ -1264,6 +1460,13 @@
 
     if (flowModeEl) flowModeEl.addEventListener("change", () => graphState && rebalance());
     if (dcN1Btn) dcN1Btn.addEventListener("click", showDcN1);
+    function onFilterChange() {
+      if (!lastFullData || !network) return;
+      applyGraphUpdate(lastFullData);
+    }
+    [filterVoltageEl, filterTypeEl, filterTopRiskEl].forEach(el => {
+      if (el) el.addEventListener("change", onFilterChange);
+    });
 
         modeGenBtn.addEventListener("click", () => setSidebarMode("generate"));
     modeReinforceBtn.addEventListener("click", () => setSidebarMode("reinforce"));
@@ -1313,6 +1516,7 @@
     }
 
     function applyResult(data) {
+      lastFullData = data;
       graphState = data.state;
       disabledSet = new Set((data.disabled || []).map(nodeId));
       syncDisabledEdgesFromData(data);
@@ -1326,6 +1530,7 @@
       renderChecks(data.checks);
       summaryEl.textContent = formatSummary(data.summary);
       renderPanel(data);
+      renderRiskTable(data);
       startBlink();
       if (data.weakest) updateWeakestHint(data.weakest);
       if (data.weakest_edge) updateWeakestEdgeHint(data.weakest_edge);
@@ -1347,6 +1552,7 @@
     }
 
     function applyGraphData(data, resetDisabled) {
+      lastFullData = data;
       graphState = data.state;
       if (resetDisabled) {
         disabledSet = new Set();
@@ -1357,8 +1563,8 @@
       if (network) {
         replaceGraphData(data, { fit: true });
       } else {
-        nodesDataset = new vis.DataSet(prepareNodeSizes(data.nodes));
-        edgesDataset = new vis.DataSet(data.edges);
+        nodesDataset = new vis.DataSet(prepareNodeSizes(visDataFromFull(data).nodes));
+        edgesDataset = new vis.DataSet(visDataFromFull(data).edges);
         network = new vis.Network(container, { nodes: nodesDataset, edges: edgesDataset }, networkOptions);
         setupNetworkEvents();
         requestAnimationFrame(() => {
@@ -1372,6 +1578,7 @@
       summaryEl.textContent = formatSummary(data.summary);
       updateDcSummary(data);
       renderPanel(data);
+      renderRiskTable(data);
       startBlink();
       weakestBtn.disabled = false;
       weakestEdgeBtn.disabled = false;

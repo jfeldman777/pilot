@@ -195,6 +195,15 @@
     if (state.edge_reactance) out.edge_reactance = { ...state.edge_reactance };
     if (state.slack_node != null) out.slack_node = state.slack_node;
     if (state.voltage_level_kv) out.voltage_level_kv = { ...state.voltage_level_kv };
+    if (state.node_types) out.node_types = { ...state.node_types };
+    if (state.edge_types) out.edge_types = { ...state.edge_types };
+    if (state.edge_voltage_kv) out.edge_voltage_kv = { ...state.edge_voltage_kv };
+    if (state.edge_from_kv) out.edge_from_kv = { ...state.edge_from_kv };
+    if (state.edge_to_kv) out.edge_to_kv = { ...state.edge_to_kv };
+    if (state.node_repair_time_days) out.node_repair_time_days = { ...state.node_repair_time_days };
+    if (state.edge_repair_time_days) out.edge_repair_time_days = { ...state.edge_repair_time_days };
+    if (state.edge_replacement_cost) out.edge_replacement_cost = { ...state.edge_replacement_cost };
+    if (state.engineering_attrs_ready) out.engineering_attrs_ready = true;
     if (state.theta) out.theta = { ...state.theta };
     return out;
   }
@@ -245,6 +254,17 @@
       edge_reactance: data.edge_reactance || null,
       slack_node: data.slack_node != null ? +data.slack_node : null,
       voltage_level_kv: data.voltage_level_kv || null,
+      node_types: data.node_types ? Object.fromEntries(Object.entries(data.node_types).map(([k, v]) => [+k, v])) : null,
+      edge_types: data.edge_types || null,
+      edge_voltage_kv: data.edge_voltage_kv || null,
+      edge_from_kv: data.edge_from_kv || null,
+      edge_to_kv: data.edge_to_kv || null,
+      node_repair_time_days: data.node_repair_time_days
+        ? Object.fromEntries(Object.entries(data.node_repair_time_days).map(([k, v]) => [+k, +v]))
+        : null,
+      edge_repair_time_days: data.edge_repair_time_days || null,
+      edge_replacement_cost: data.edge_replacement_cost || null,
+      engineering_attrs_ready: !!data.engineering_attrs_ready,
       theta: data.theta || null,
     };
   }
@@ -2841,7 +2861,261 @@
 
   // --- DC power flow (engineering screening, mode 5) ---
 
-  const KV_LEVELS = [35, 110, 220, 330];
+  const ENGINEERING_KV = [750, 330, 110];
+
+  function engineeringNodeType(role, degree, rng) {
+    if (role === "generator") return "generator";
+    if (role === "consumer") return "load";
+    if (degree >= 3 || rng.random() < 0.4) return "substation";
+    return "bus";
+  }
+
+  function assignEngineeringVoltageAndTypes(state, seed) {
+    const G = stateToGraph(state);
+    const rng = new Random((seed >>> 0) + 404);
+    const kv = {};
+    const nodeTypes = {};
+    for (const v of G.nodes()) {
+      const role = state.roles[v];
+      const deg = G.degree(v);
+      const ntype = engineeringNodeType(role, deg, rng);
+      nodeTypes[v] = ntype;
+      if (role === "generator") {
+        kv[v] = rng.random() < 0.35 ? 750 : 330;
+      } else if (role === "consumer") {
+        kv[v] = rng.random() < 0.65 ? 110 : 330;
+      } else if (ntype === "substation") {
+        kv[v] = rng.random() < 0.45 ? 750 : 330;
+      } else {
+        kv[v] = 110;
+      }
+    }
+    state.voltage_level_kv = kv;
+    state.node_types = nodeTypes;
+    return { kv, nodeTypes };
+  }
+
+  function mergeEdgeCapacities(state, G, seed) {
+    const rng = new Random((seed >>> 0) + 305);
+    if (!state.edge_capacity) state.edge_capacity = {};
+    for (const [u, v] of G.edges) {
+      const ek = edgeKey(u, v);
+      if (state.edge_capacity[ek] != null) continue;
+      const et = state.edge_types?.[ek];
+      if (et === "transformer") {
+        const fromKv = state.edge_from_kv?.[ek] || 330;
+        state.edge_capacity[ek] = fromKv >= 750 ? rng.randint(200, 600) : rng.randint(80, 320);
+      } else {
+        const lineKv = state.edge_voltage_kv?.[ek] || state.voltage_level_kv[u] || 110;
+        state.edge_capacity[ek] = lineKv >= 750 ? rng.randint(400, 1200) : lineKv >= 330 ? rng.randint(120, 500) : rng.randint(30, 120);
+      }
+    }
+  }
+
+  function mergeEdgeReactance(state, G, seed) {
+    const rng = new Random((seed >>> 0) + 306);
+    if (!state.edge_reactance) state.edge_reactance = {};
+    for (const [u, v] of G.edges) {
+      const ek = edgeKey(u, v);
+      if (state.edge_reactance[ek] != null) continue;
+      const cap = state.edge_capacity?.[ek] || 100;
+      const et = state.edge_types?.[ek];
+      const base = et === "transformer"
+        ? 0.12 + 18 / Math.max(cap, 40)
+        : 0.04 + 12 / Math.max(cap, 8);
+      state.edge_reactance[ek] = Math.round((base + rng.random() * 0.06) * 1000) / 1000;
+    }
+  }
+
+  function injectTransformerEdges(state, seed) {
+    const G = stateToGraph(state);
+    const rng = new Random((seed >>> 0) + 707);
+    const kv = state.voltage_level_kv;
+    if (!state.edge_types) state.edge_types = {};
+    if (!state.edge_from_kv) state.edge_from_kv = {};
+    if (!state.edge_to_kv) state.edge_to_kv = {};
+    if (!state.new_edges) state.new_edges = [];
+
+    function tryAdd(u, v, fromKv, toKv) {
+      if (u === v || G.hasEdge(u, v)) return false;
+      const ek = edgeKey(u, v);
+      state.edges.push([u, v]);
+      G.addEdge(u, v);
+      state.new_edges.push(ek);
+      state.edge_types[ek] = "transformer";
+      state.edge_from_kv[ek] = fromKv;
+      state.edge_to_kv[ek] = toKv;
+      return true;
+    }
+
+    const high = G.nodes().filter(v => kv[v] === 750);
+    const med = G.nodes().filter(v => kv[v] === 330);
+    const low = G.nodes().filter(v => kv[v] === 110);
+
+    for (const h of high) {
+      const targets = med.filter(m => !G.hasEdge(h, m));
+      if (targets.length) tryAdd(h, rng.choice(targets), 750, 330);
+    }
+    for (const m of med) {
+      if (state.node_types[m] !== "substation" && G.degree(m) < 3) continue;
+      const targets = low.filter(l => !G.hasEdge(m, l));
+      if (targets.length) tryAdd(m, rng.choice(targets), 330, 110);
+    }
+    for (const l of low) {
+      if (state.node_types[l] !== "load") continue;
+      const linked330 = med.some(m => G.hasEdge(m, l));
+      if (!linked330 && med.length) tryAdd(rng.choice(med), l, 330, 110);
+    }
+  }
+
+  function assignEngineeringEdgeTypes(state, G) {
+    const kv = state.voltage_level_kv || {};
+    if (!state.edge_types) state.edge_types = {};
+    if (!state.edge_voltage_kv) state.edge_voltage_kv = {};
+    if (!state.edge_from_kv) state.edge_from_kv = {};
+    if (!state.edge_to_kv) state.edge_to_kv = {};
+    for (const [u, v] of G.edges) {
+      const ek = edgeKey(u, v);
+      if (state.edge_types[ek] === "transformer" && state.edge_from_kv[ek]) continue;
+      const ku = kv[u] ?? 110;
+      const kvV = kv[v] ?? 110;
+      if (ku === kvV) {
+        state.edge_types[ek] = "line";
+        state.edge_voltage_kv[ek] = ku;
+      } else {
+        const hi = Math.max(ku, kvV);
+        const lo = Math.min(ku, kvV);
+        state.edge_types[ek] = "transformer";
+        state.edge_from_kv[ek] = hi;
+        state.edge_to_kv[ek] = lo;
+      }
+    }
+  }
+
+  function repairTimeDaysLine(kv, rng) {
+    if (kv >= 750) return rng.randint(14, 90);
+    if (kv >= 330) return rng.randint(7, 30);
+    return rng.randint(1, 7);
+  }
+
+  function repairTimeDaysTransformer(fromKv, rng) {
+    if (fromKv >= 750) return rng.randint(180, 720);
+    if (fromKv >= 330) return rng.randint(30, 180);
+    return rng.randint(30, 180);
+  }
+
+  function assignEngineeringRepairTimes(state, G, seed) {
+    const rng = new Random((seed >>> 0) + 808);
+    const kv = state.voltage_level_kv || {};
+    const nodeTypes = state.node_types || {};
+    state.node_repair_time_days = state.node_repair_time_days || {};
+    state.edge_repair_time_days = state.edge_repair_time_days || {};
+    state.edge_replacement_cost = state.edge_replacement_cost || {};
+    for (const v of G.nodes()) {
+      const ntype = nodeTypes[v] || "bus";
+      if (ntype === "generator") {
+        state.node_repair_time_days[v] = rng.randint(7, 120);
+      } else if (ntype === "load") {
+        state.node_repair_time_days[v] = rng.randint(1, 14);
+      } else if (ntype === "substation") {
+        state.node_repair_time_days[v] = repairTimeDaysTransformer(kv[v] >= 750 ? 750 : 330, rng);
+      } else {
+        state.node_repair_time_days[v] = rng.randint(1, 7);
+      }
+    }
+    for (const [u, v] of G.edges) {
+      const ek = edgeKey(u, v);
+      if (state.edge_types[ek] === "transformer") {
+        const fromKv = state.edge_from_kv[ek] || 330;
+        state.edge_repair_time_days[ek] = repairTimeDaysTransformer(fromKv, rng);
+        state.edge_replacement_cost[ek] = fromKv >= 750
+          ? rng.randint(8, 25) * 1_000_000
+          : rng.randint(2, 12) * 1_000_000;
+      } else {
+        const lineKv = state.edge_voltage_kv[ek] || kv[u] || 110;
+        state.edge_repair_time_days[ek] = repairTimeDaysLine(lineKv, rng);
+      }
+    }
+  }
+
+  function lostLoadMw(state, G, servedAfter, servedBefore, disabled = new Set()) {
+    let lost = 0;
+    for (const v of G.nodes()) {
+      if (state.roles[v] !== "consumer" || disabled.has(v)) continue;
+      const before = servedBefore[v] || 0;
+      const after = servedAfter[v] || 0;
+      lost += Math.max(0, before - after);
+    }
+    return Math.round(lost * 10) / 10;
+  }
+
+  function computeEngineeringRisk(state, G, disabled, disabledEdges, servedBefore) {
+    const kv = state.voltage_level_kv || {};
+    const nodeTypes = state.node_types || {};
+    const nodeRepair = state.node_repair_time_days || {};
+    const edgeRepair = state.edge_repair_time_days || {};
+    const edgeTypes = state.edge_types || {};
+    const objects = [];
+
+    for (const v of G.nodes()) {
+      if (disabled.has(v)) continue;
+      const trialDisabled = new Set(disabled);
+      trialDisabled.add(v);
+      const { served } = computeFlowsFromState(G, state, trialDisabled, disabledEdges);
+      const impact = lostLoadMw(state, G, served, servedBefore, trialDisabled);
+      const repair = nodeRepair[v] || 1;
+      const redundancy = 1 / Math.max(1, G.degree(v));
+      const risk = Math.round(impact * repair * redundancy);
+      objects.push({
+        kind: "node",
+        id: v,
+        object: `${nodeName(v, G.n)} (#${v})`,
+        type: nodeTypes[v] || "bus",
+        voltage_kv: kv[v] ?? null,
+        impact_mw: impact,
+        repair_time_days: repair,
+        redundancy_factor: Math.round(redundancy * 1000) / 1000,
+        risk_score: risk,
+        repair_time_source: "SYNTHETIC",
+        risk_method: "simplified (1/degree)",
+      });
+    }
+
+    for (const [u, v] of G.edges) {
+      const ek = edgeKey(u, v);
+      if (disabled.has(u) || disabled.has(v) || disabledEdges.has(ek)) continue;
+      const trialEdges = edgeKeySet(state.disabled_edges);
+      trialEdges.add(ek);
+      const { served } = computeFlowsFromState(G, state, disabled, trialEdges);
+      const impact = lostLoadMw(state, G, served, servedBefore, disabled);
+      const repair = edgeRepair[ek] || 1;
+      const redundancy = 1 / Math.max(1, Math.min(G.degree(u), G.degree(v)));
+      const risk = Math.round(impact * repair * redundancy);
+      const et = edgeTypes[ek] || "line";
+      const voltage = et === "transformer"
+        ? `${state.edge_from_kv[ek] || "?"}→${state.edge_to_kv[ek] || "?"}`
+        : String(state.edge_voltage_kv[ek] || kv[u] || "—");
+      objects.push({
+        kind: "edge",
+        id: `${u}-${v}`,
+        edgeKey: ek,
+        u,
+        v,
+        object: `${nodeName(u, G.n)}—${nodeName(v, G.n)}`,
+        type: et,
+        voltage_kv: voltage,
+        impact_mw: impact,
+        repair_time_days: repair,
+        redundancy_factor: Math.round(redundancy * 1000) / 1000,
+        risk_score: risk,
+        repair_time_source: "SYNTHETIC",
+        risk_method: "simplified (1/degree)",
+      });
+    }
+
+    objects.sort((a, b) => b.risk_score - a.risk_score || b.impact_mw - a.impact_mw);
+    return objects;
+  }
 
   function assetTypeFromRole(role) {
     if (role === "generator") return "generator";
@@ -2861,12 +3135,7 @@
   }
 
   function assignVoltageLevels(state, seed) {
-    const rng = new Random((seed >>> 0) + 404);
-    const kv = {};
-    for (const v of Object.keys(state.roles)) {
-      kv[v] = KV_LEVELS[rng.randint(0, KV_LEVELS.length - 1)];
-    }
-    return kv;
+    return assignEngineeringVoltageAndTypes(state, seed).kv;
   }
 
   function pickSlackNode(G, state, disabled) {
@@ -2879,17 +3148,27 @@
   }
 
   function initEngineeringState(state, seed) {
+    if (!state.engineering_attrs_ready) {
+      assignEngineeringVoltageAndTypes(state, seed);
+      injectTransformerEdges(state, seed);
+      state.engineering_attrs_ready = true;
+    }
     const G = stateToGraph(state);
     if (!state.edge_capacity) state.edge_capacity = assignSyntheticEdgeCapacities(G, state, seed);
+    else mergeEdgeCapacities(state, G, seed);
     if (!state.edge_reactance) state.edge_reactance = assignSyntheticReactance(G, state, seed);
+    else mergeEdgeReactance(state, G, seed);
     if (!state.priority) state.priority = assignConsumerPriorities(state, seed);
-    if (!state.voltage_level_kv) state.voltage_level_kv = assignVoltageLevels(state, seed);
+    assignEngineeringEdgeTypes(state, G);
+    assignEngineeringRepairTimes(state, G, seed);
     state.slack_node = pickSlackNode(G, state, new Set());
     state.passport = {
       coords: state.passport?.coords || "SYNTHETIC",
       links: "SYNTHETIC",
       capacity: "SYNTHETIC",
       reactance: "SYNTHETIC",
+      repair_time: "SYNTHETIC",
+      risk_score: "SIMPLIFIED_SCREENING",
       model: "DC_POWER_FLOW_SCREENING",
     };
     if (!state.reinforced_edges) state.reinforced_edges = [];
@@ -3056,23 +3335,53 @@
       disabled, failed, geo, positions, disabledEdges, edgeCapacity, priorities, reinforcedSet, newSet, served
     );
     if (!positions) spreadGeoNodeDisplays(base.nodes, seed);
+    for (const node of base.nodes) {
+      node.letter = node.letter || nodeName(node.id, nVerts);
+    }
+    enrichEngineeringVisObjects(
+      base, G, state, roles, production, consumption, mathFlow, dcFlow, dcResult, flowMode,
+      edgeCapacity, reactance, engOpts.riskByNode, engOpts.riskByEdge
+    );
+    for (const edge of base.edges) {
+      const [u, v] = String(edge.id).split("-").map(Number);
+      const ek = edgeKey(u, v);
+      edge.n1_outage = n1Outage === ek;
+      const df = dcFlow[ek] || 0;
+      const cap = getEdgeCapacityMw(edgeCapacity, u, v);
+      edge.dc_violation = !edge.disabled_manual_edge && Math.abs(df) > cap + 1e-6;
+      if (edge.disabled_manual_edge && !edge.n1_outage) {
+        edge.label = engineeringGeoEdgeLabel(u, v, mathFlow[ek] || 0, df, cap, flowMode, nVerts, true);
+      }
+    }
+    return base;
+  }
 
+  function enrichEngineeringVisObjects(base, G, state, roles, production, consumption, mathFlow, dcFlow, dcResult, flowMode, edgeCapacity, reactance, riskByNode, riskByEdge) {
     const kv = state.voltage_level_kv || {};
+    const theta = dcResult.theta || {};
     for (const node of base.nodes) {
       const v = node.id;
       const role = roles[v];
-      node.letter = node.letter || nodeName(v, nVerts);
-      node.asset_type = assetTypeFromRole(role);
+      const ntype = state.node_types?.[v] ?? assetTypeFromRole(role);
+      const ro = riskByNode?.get(v);
+      node.asset_type = ntype;
       node.generation_mw = role === "generator" ? (production[v] || 0) : 0;
       node.load_mw = role === "consumer" ? (consumption[v] || 0) : 0;
       node.voltage_level_kv = kv[v] ?? kv[String(v)] ?? null;
       node.theta = theta[v] != null ? Math.round(theta[v] * 10000) / 10000 : null;
       node.is_slack = v === dcResult.slack;
+      node.repair_time_days = state.node_repair_time_days?.[v] ?? null;
+      node.repair_time_source = "SYNTHETIC";
+      node.impact_mw = ro?.impact_mw ?? 0;
+      node.risk_score = ro?.risk_score ?? 0;
+      node.redundancy_factor = ro?.redundancy_factor ?? null;
+      node.risk_method = ro?.risk_method || "simplified (1/degree)";
       if (node.is_slack) node.title += `\nSLACK · θ=0`;
       if (node.theta != null) node.title += `\nθ=${node.theta}`;
-      if (node.voltage_level_kv) node.title += `\n${node.voltage_level_kv} kV`;
+      if (node.voltage_level_kv) node.title += `\n${node.voltage_level_kv} kV · ${ntype}`;
+      if (node.repair_time_days != null) node.title += `\nrepair ${node.repair_time_days}d (SYNTHETIC)`;
+      if (node.risk_score) node.title += `\nrisk ${node.risk_score}`;
     }
-
     for (const edge of base.edges) {
       const [u, v] = String(edge.id).split("-").map(Number);
       const ek = edgeKey(u, v);
@@ -3080,33 +3389,58 @@
       const df = dcFlow[ek] || 0;
       const cap = getEdgeCapacityMw(edgeCapacity, u, v);
       const x = reactance[ek] || 0.1;
+      const ro = riskByEdge?.get(ek);
+      const et = state.edge_types?.[ek] || "line";
+      edge.edge_type = et;
       edge.reactance = x;
       edge.math_flow_mw = mf;
       edge.dc_flow_mw = df;
       edge.flow_difference = Math.round((df - mf) * 100) / 100;
       const showF = flowMode === "dc" ? df : mf;
       const dcLoading = cap > 0 ? Math.round((Math.abs(df) / cap) * 1000) / 10 : 0;
-      const showLoading = cap > 0 ? Math.round((Math.abs(showF) / cap) * 1000) / 10 : 0;
       edge.dc_loading_percent = dcLoading;
-      edge.loading_percent = showLoading;
       const violation = !edge.disabled_manual_edge && Math.abs(flowMode === "dc" ? df : mf) > cap + 1e-6;
       edge.capacity_violation = violation;
-      edge.dc_violation = !edge.disabled_manual_edge && Math.abs(df) > cap + 1e-6;
       edge.flow_mw = showF;
-      edge.n1_outage = n1Outage === ek;
-      if (!edge.disabled_manual_edge || edge.n1_outage) {
-        edge.label = engineeringGeoEdgeLabel(u, v, mf, df, cap, flowMode, nVerts, edge.disabled_manual_edge && !edge.n1_outage);
+      edge.loading_percent = cap > 0 ? Math.round((Math.abs(showF) / cap) * 1000) / 10 : 0;
+      edge.capacity_mw = cap;
+      edge.repair_time_days = state.edge_repair_time_days?.[ek] ?? null;
+      edge.repair_time_source = "SYNTHETIC";
+      edge.impact_mw = ro?.impact_mw ?? 0;
+      edge.risk_score = ro?.risk_score ?? 0;
+      edge.redundancy_factor = ro?.redundancy_factor ?? null;
+      edge.risk_method = ro?.risk_method || "simplified (1/degree)";
+      if (et === "transformer") {
+        edge.from_voltage_kv = state.edge_from_kv?.[ek];
+        edge.to_voltage_kv = state.edge_to_kv?.[ek];
+        edge.voltage_label = `${edge.from_voltage_kv}→${edge.to_voltage_kv}`;
+        edge.replacement_cost = state.edge_replacement_cost?.[ek];
+        if (!edge.disabled_manual_edge && !violation) {
+          edge.color = { color: "#7B1FA2", highlight: "#4A148C" };
+          edge.dashes = [6, 10];
+          edge.width = 3;
+        }
+      } else {
+        edge.voltage_level_kv = state.edge_voltage_kv?.[ek] ?? kv[u] ?? null;
       }
-      if (flowMode === "compare") {
-        edge.title = `math ${Math.round(mf)} MW · dc ${Math.round(df * 10) / 10} MW · Δ ${edge.flow_difference}`;
-      } else if (flowMode === "dc") {
-        edge.title = `${nodeName(u, nVerts)}—${nodeName(v, nVerts)} · x=${x} · ${Math.round(df * 10) / 10}/${Math.round(cap)} MW · ${dcLoading}%`;
+      if (!edge.disabled_manual_edge) {
+        const nVerts = G.n;
+        const labelFn = nVerts > LETTERS.length
+          ? (a, b, m, d, c, fm) => engineeringGeoEdgeLabel(a, b, m, d, c, fm, nVerts, false)
+          : (a, b, m, d, c, fm) => engineeringEdgeLabel(a, b, m, d, c, fm);
+        edge.label = labelFn(u, v, mf, df, cap, flowMode);
+        if (flowMode === "compare") {
+          edge.title = `math ${Math.round(mf)} MW · dc ${Math.round(df * 10) / 10} MW · Δ ${edge.flow_difference}`;
+        } else if (flowMode === "dc") {
+          const vtag = et === "transformer" ? edge.voltage_label : `${edge.voltage_level_kv} kV`;
+          edge.title = `${nodeName(u, nVerts)}—${nodeName(v, nVerts)} · ${et} · ${vtag} · x=${x} · ${Math.round(df * 10) / 10}/${Math.round(cap)} MW · ${dcLoading}%`;
+        }
       }
     }
     return base;
   }
 
-  function buildEngineeringVisData(G, state, mathFlow, surplus, failed, served, dcResult, flowMode, disabled, disabledEdges, positions, seed) {
+  function buildEngineeringVisData(G, state, mathFlow, surplus, failed, served, dcResult, flowMode, disabled, disabledEdges, positions, seed, engOpts = {}) {
     const roles = state.roles;
     const production = state.production;
     const consumption = state.consumption;
@@ -3116,51 +3450,16 @@
     const reinforcedSet = new Set((state.reinforced_edges || []).map(k => (typeof k === "string" ? k : edgeKey(k[0], k[1]))));
     const newSet = new Set((state.new_edges || []).map(k => (typeof k === "string" ? k : edgeKey(k[0], k[1]))));
     const dcFlow = dcResult.dcFlow || {};
-    const theta = dcResult.theta || {};
     const displayFlow = flowMode === "dc" ? dcFlow : mathFlow;
     const base = buildVisData(
       G, roles, production, consumption, displayFlow, surplus, seed,
       disabled, failed, positions, disabledEdges, edgeCapacity, priorities, reinforcedSet, newSet, served
     );
     if (!positions) spreadVisNodes(base.nodes);
-    const kv = state.voltage_level_kv || {};
-    for (const node of base.nodes) {
-      const v = node.id;
-      const role = roles[v];
-      node.asset_type = assetTypeFromRole(role);
-      node.generation_mw = role === "generator" ? (production[v] || 0) : 0;
-      node.load_mw = role === "consumer" ? (consumption[v] || 0) : 0;
-      node.voltage_level_kv = kv[v] ?? kv[String(v)] ?? null;
-      node.theta = theta[v] != null ? Math.round(theta[v] * 10000) / 10000 : null;
-      node.is_slack = v === dcResult.slack;
-      if (node.is_slack) node.title += `\nSLACK · θ=0`;
-      if (node.theta != null) node.title += `\nθ=${node.theta}`;
-      if (node.voltage_level_kv) node.title += `\n${node.voltage_level_kv} kV`;
-    }
-    for (const edge of base.edges) {
-      const [u, v] = String(edge.id).split("-").map(Number);
-      const ek = edgeKey(u, v);
-      const mf = mathFlow[ek] || 0;
-      const df = dcFlow[ek] || 0;
-      const cap = getEdgeCapacityMw(edgeCapacity, u, v);
-      const x = reactance[ek] || 0.1;
-      edge.reactance = x;
-      edge.math_flow_mw = mf;
-      edge.dc_flow_mw = df;
-      edge.flow_difference = Math.round((df - mf) * 100) / 100;
-      const showF = flowMode === "dc" ? df : mf;
-      const violation = !edge.disabled_manual_edge && Math.abs((flowMode === "dc" ? df : mf)) > cap + 1e-6;
-      edge.capacity_violation = violation;
-      edge.flow_mw = showF;
-      edge.loading_percent = cap > 0 ? Math.round((Math.abs(showF) / cap) * 1000) / 10 : 0;
-      if (!edge.disabled_manual_edge) {
-        edge.label = engineeringEdgeLabel(u, v, mf, df, cap, flowMode);
-        if (flowMode === "compare") {
-          edge.title = `math ${Math.round(mf)} MW · dc ${Math.round(df * 10) / 10} MW · Δ ${edge.flow_difference}`;
-        }
-      }
-    }
-    return base;
+    return enrichEngineeringVisObjects(
+      base, G, state, roles, production, consumption, mathFlow, dcFlow, dcResult, flowMode,
+      edgeCapacity, reactance, engOpts.riskByNode, engOpts.riskByEdge
+    );
   }
 
   function evaluateStateEngineering(state, disabled = new Set(), positions = null, engOpts = {}) {
@@ -3176,15 +3475,23 @@
     state.theta = dcResult.theta;
     state.slack_node = dcResult.slack;
     const dcFeas = analyzeDCFeasibility(G, dcResult.dcFlow || {}, state.edge_capacity, disabled, disabledEdges);
+    const riskObjects = computeEngineeringRisk(state, G, disabled, disabledEdges, served);
+    const riskByNode = new Map();
+    const riskByEdge = new Map();
+    for (const o of riskObjects) {
+      if (o.kind === "node") riskByNode.set(o.id, o);
+      else riskByEdge.set(o.edgeKey, o);
+    }
+    const visEngOpts = { ...engOpts, riskByNode, riskByEdge };
     const isGeo = isEngineeringGeoState(state);
     const { nodes, edges } = isGeo
       ? buildEngineeringMapVisData(
         G, state, mathFlow, surplus, failed, served, dcResult, flowMode,
-        disabled, disabledEdges, state.geo, positions, seed, engOpts
+        disabled, disabledEdges, state.geo, positions, seed, visEngOpts
       )
       : buildEngineeringVisData(
         G, state, mathFlow, surplus, failed, served, dcResult, flowMode,
-        disabled, disabledEdges, positions, seed
+        disabled, disabledEdges, positions, seed, visEngOpts
       );
     const balances = nodeBalance(G, state.production, state.consumption, mathFlow, surplus);
     const checks = isGeo
@@ -3248,6 +3555,9 @@
         total_generation: params.total_production,
         total_load: params.total_consumption,
       },
+      engineering_risk: riskObjects,
+      top_risk_objects: riskObjects.slice(0, 10),
+      risk_disclaimer: "Engineering attributes are synthetic. Risk score is a simplified screening metric (redundancy ≈ 1/degree), not an operational assessment.",
     };
   }
 
