@@ -51,6 +51,11 @@ def eng_map_page():
     return send_from_directory(ROOT, "eng-map.html")
 
 
+@app.get("/eng-large.html")
+def eng_large_page():
+    return send_from_directory(ROOT, "eng-large.html")
+
+
 @app.get("/<path:path>")
 def static_files(path):
     return send_from_directory(ROOT, path)

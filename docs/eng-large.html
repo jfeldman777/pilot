@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Large engineering — DC screening</title>
+  <link rel="stylesheet" href="home-nav.css">
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "Segoe UI", Arial, sans-serif; height: 100vh; display: flex; background: #f0f2f5; color: #222; overflow: hidden; }
+    .sidebar { width: 320px; min-width: 320px; background: #fff; border-right: 1px solid #ddd; overflow-y: auto; z-index: 10; display: flex; flex-direction: column; }
+    .sidebar h1 { font-size: 17px; padding: 14px 16px 6px; }
+    .sidebar p { font-size: 12px; color: #666; padding: 0 16px 8px; line-height: 1.4; }
+    .banner { margin: 0 16px 10px; padding: 8px 10px; background: #e8eaf6; border: 1px solid #9fa8da; border-radius: 6px; font-size: 10px; line-height: 1.45; color: #283593; }
+    .sidebar-panel { padding: 0 16px 16px; }
+    .field { margin-bottom: 10px; }
+    .field label { display: block; font-size: 11px; font-weight: 600; margin-bottom: 3px; color: #444; }
+    .field input, .field select { width: 100%; padding: 7px 9px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .preset-row { display: flex; gap: 6px; margin-bottom: 10px; }
+    .preset-row button { flex: 1; padding: 7px; border: 1px solid #5c6bc0; background: #fff; color: #3949ab; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .preset-row button.active { background: #5c6bc0; color: #fff; }
+    .filter-group { margin: 10px 0; padding: 8px; background: #f7f7f7; border-radius: 6px; }
+    .filter-group h3 { font-size: 11px; margin-bottom: 6px; color: #555; }
+    .filter-group label { font-size: 11px; display: block; margin: 3px 0; cursor: pointer; }
+    button.primary { width: 100%; padding: 10px; background: #5c6bc0; color: #fff; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; }
+    button.primary:disabled { background: #aaa; cursor: not-allowed; }
+    button.secondary { width: 100%; margin-top: 8px; padding: 9px; background: #fff; color: #5c6bc0; border: 1px solid #5c6bc0; border-radius: 6px; font-weight: 600; cursor: pointer; }
+    button.secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .weakest-hint { font-size: 11px; line-height: 1.45; padding: 8px; margin: 8px 0; border-radius: 6px; background: #f5f5f5; color: #555; border: 1px solid #e0e0e0; }
+    .weakest-hint.active { background: #fff3e0; color: #e65100; border-color: #ffcc80; }
+    .error { margin: 8px 16px; padding: 8px; background: #ffebee; color: #c62828; border-radius: 6px; font-size: 12px; display: none; }
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .toolbar { padding: 10px 14px; background: #fff; border-bottom: 1px solid #ddd; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .stats { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px; }
+    .stat { background: #f5f5f5; padding: 4px 8px; border-radius: 4px; }
+    .stat b { color: #3949ab; }
+    .eng-metrics { font-size: 11px; color: #333; background: #e8eaf6; padding: 6px 10px; border-radius: 6px; line-height: 1.5; }
+    .graph-wrap { flex: 1; position: relative; min-height: 0; }
+    #graph { width: 100%; height: 100%; background: #fafafa; }
+    .hint { position: absolute; bottom: 8px; left: 8px; font-size: 11px; color: #666; background: rgba(255,255,255,0.92); padding: 6px 8px; border-radius: 4px; pointer-events: none; }
+    .info-panel { width: 300px; min-width: 300px; background: #fff; border-left: 1px solid #ddd; overflow-y: auto; padding: 12px 14px; font-size: 12px; }
+    .info-panel h2 { font-size: 14px; margin-bottom: 10px; }
+    .panel-section { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #f0f0f0; }
+    .panel-section h3 { font-size: 11px; color: #555; margin-bottom: 6px; }
+    .risk-table, .n1-table, .mc-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+    .risk-table th, .risk-table td, .n1-table th, .n1-table td, .mc-table th, .mc-table td { padding: 3px 5px; border-bottom: 1px solid #eee; text-align: left; }
+    .risk-table tr.clickable, .n1-table tr.clickable, .mc-table tr.clickable { cursor: pointer; }
+    .risk-table tr.clickable:hover, .n1-table tr.clickable:hover { background: #e8eaf6; }
+    .cascade-timeline { list-style: none; font-size: 10px; max-height: 140px; overflow-y: auto; line-height: 1.4; }
+    .cascade-timeline li { padding: 4px 0; border-bottom: 1px solid #eee; }
+    .cascade-metrics { font-size: 10px; line-height: 1.5; background: #fff8e1; border: 1px solid #ffe082; border-radius: 6px; padding: 8px; margin-top: 6px; }
+    .mc-progress { margin: 8px 0; }
+    .mc-progress-bar { height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden; }
+    .mc-progress-fill { height: 100%; background: #5c6bc0; width: 0%; transition: width 0.15s; }
+    .mc-progress-text { font-size: 10px; color: #555; margin-top: 4px; }
+    .mc-summary { font-size: 10px; line-height: 1.5; background: #e3f2fd; border: 1px solid #90caf9; border-radius: 6px; padding: 8px; margin-top: 6px; }
+    .panel-list { list-style: none; font-size: 11px; max-height: 80px; overflow-y: auto; }
+    .panel-list li { padding: 3px 0; border-bottom: 1px solid #eee; }
+    .panel-toggle { position: absolute; top: 10px; right: 10px; z-index: 5; padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; background: rgba(255,255,255,0.95); cursor: pointer; font-size: 12px; }
+    body.graph-only .sidebar, body.graph-only .info-panel, body.graph-only .toolbar { display: none !important; }
+  </style>
+</head>
+<body>
+  <a href="home.html" class="home-btn" title="Домой">⌂</a>
+  <aside class="sidebar" id="app-sidebar">
+    <h1>Large engineering — схема</h1>
+    <p id="sidebar-desc">Режим 7 из 8 · Инженерная · большой · схема</p>
+    <div class="banner">
+      Large engineering screening mode.<br>
+      Synthetic network and synthetic electrical parameters.<br>
+      DC screening only, not operational assessment.
+    </div>
+    <div class="sidebar-panel">
+      <div class="preset-row">
+        <button type="button" data-n="100" class="active">100</button>
+        <button type="button" data-n="300">300</button>
+        <button type="button" data-n="1000">1000</button>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="n_vertices">Узлов</label>
+          <input type="number" id="n_vertices" value="100" min="10" max="2000">
+        </div>
+        <div class="field">
+          <label for="seed">Seed</label>
+          <input type="number" id="seed" value="42">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="min_degree">min degree</label>
+          <input type="number" id="min_degree" value="2" min="1">
+        </div>
+        <div class="field">
+          <label for="max_degree">max degree</label>
+          <input type="number" id="max_degree" value="6" min="2">
+        </div>
+      </div>
+      <button type="button" id="generate-btn" class="primary">Сгенерировать сеть</button>
+      <button type="button" id="dc-n1-btn" class="secondary" disabled>DC N-1 scan</button>
+      <div class="weakest-hint" id="dc-n1-hint">N-1: full @100 nodes · sampled @300/1000</div>
+      <div class="field" style="margin-top:10px">
+        <label for="cascade-threshold">Cascade trip %</label>
+        <input type="number" id="cascade-threshold" value="120" min="100" max="300" step="5">
+      </div>
+      <div class="field">
+        <label for="cascade-max-steps">Max cascade steps</label>
+        <input type="number" id="cascade-max-steps" value="10" min="1" max="30">
+      </div>
+      <button type="button" id="cascade-run-btn" class="secondary" disabled>Запустить каскад</button>
+      <button type="button" id="cascade-reset-btn" class="secondary" disabled>Сбросить каскад</button>
+      <div class="field-row" style="margin-top:10px">
+        <div class="field">
+          <label for="mc-runs">MC runs</label>
+          <select id="mc-runs">
+            <option value="100">100</option>
+            <option value="1000">1000</option>
+            <option value="5000">5000</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="mc-max-outages">Outages/run</label>
+          <select id="mc-max-outages">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3" selected>3</option>
+          </select>
+        </div>
+      </div>
+      <button type="button" id="mc-run-btn" class="secondary" disabled>Monte Carlo</button>
+      <button type="button" id="mc-stop-btn" class="secondary" disabled>Стоп MC</button>
+      <button type="button" id="mc-reset-btn" class="secondary" disabled>Сброс MC</button>
+      <div class="mc-progress" id="mc-progress-wrap" style="display:none">
+        <div class="mc-progress-bar"><div class="mc-progress-fill" id="mc-progress-fill"></div></div>
+        <div class="mc-progress-text" id="mc-progress-text">0 / 0</div>
+      </div>
+      <div class="filter-group">
+        <h3>Визуализация</h3>
+        <div class="field">
+          <label for="label_mode">Подписи</label>
+          <select id="label_mode">
+            <option value="none" selected>без подписей</option>
+            <option value="selected">выбранные / top risk</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="filter-voltage">kV</label>
+            <select id="filter-voltage">
+              <option value="">все</option>
+              <option value="110">110</option>
+              <option value="220">220</option>
+              <option value="330">330</option>
+              <option value="500">500</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="filter-type">asset type</label>
+            <select id="filter-type">
+              <option value="">все</option>
+              <option value="generator">generator</option>
+              <option value="load">load</option>
+              <option value="substation">substation</option>
+              <option value="line">line</option>
+              <option value="transformer">transformer</option>
+            </select>
+          </div>
+        </div>
+        <label><input type="checkbox" id="filter-top-risk"> только top risk</label>
+        <label><input type="checkbox" class="type-f" data-type="generator" checked> generator</label>
+        <label><input type="checkbox" class="type-f" data-type="consumer" checked> consumer/load</label>
+        <label><input type="checkbox" class="type-f" data-type="transit" checked> transit</label>
+        <label><input type="checkbox" class="status-f" data-status="active" checked> active</label>
+        <label><input type="checkbox" class="status-f" data-status="disabled" checked> disabled</label>
+        <label><input type="checkbox" class="status-f" data-status="failed" checked> failed</label>
+        <div class="field" style="margin-top:6px">
+          <label for="flow_threshold">Порог потока MW</label>
+          <input type="number" id="flow_threshold" value="0" min="0" step="1">
+        </div>
+        <div class="field">
+          <label for="edge_mode">Рёбра</label>
+          <select id="edge_mode">
+            <option value="all">все</option>
+            <option value="active" selected>с потоком</option>
+            <option value="hidden">скрыть</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="error" id="error"></div>
+  </aside>
+
+  <main class="main">
+    <div class="toolbar">
+      <div class="eng-metrics" id="eng-metrics">DC: —</div>
+      <div class="stats" id="stats-bar">
+        <span class="stat">Узлов: <b id="st-v">—</b></span>
+        <span class="stat">Рёбер: <b id="st-e">—</b></span>
+        <span class="stat">Gen MW: <b id="st-gen">—</b></span>
+        <span class="stat">Load MW: <b id="st-load">—</b></span>
+        <span class="stat">DC load%: <b id="st-dcload">—</b></span>
+        <span class="stat">Cap↓: <b id="st-cap">—</b></span>
+        <span class="stat">Failed: <b id="st-failed">—</b></span>
+      </div>
+      <span id="timing" style="font-size:11px;color:#888"></span>
+    </div>
+    <div class="graph-wrap">
+      <button type="button" id="toggle-panels-btn" class="panel-toggle">⛶ Граф</button>
+      <div id="graph"></div>
+      <div class="hint">Клик — откл/вкл · каскад: выберите узел/ребро · без подписей по умолчанию</div>
+    </div>
+  </main>
+
+  <aside class="info-panel" id="app-info-panel">
+    <h2>Аналитика</h2>
+    <div class="panel-section">
+      <h3>Top-10 risky objects</h3>
+      <table class="risk-table">
+        <thead><tr><th>obj</th><th>type</th><th>kV</th><th>risk</th></tr></thead>
+        <tbody id="risk-body"><tr><td colspan="4">Сгенерируйте сеть</td></tr></tbody>
+      </table>
+    </div>
+    <div class="panel-section">
+      <h3>Top-10 N-1 scenarios</h3>
+      <table class="n1-table">
+        <thead><tr><th>edge</th><th>load%</th><th>cap↓</th><th>crit↓</th></tr></thead>
+        <tbody id="n1-body"><tr><td colspan="4">Запустите N-1</td></tr></tbody>
+      </table>
+    </div>
+    <div class="panel-section">
+      <h3>Cascade summary</h3>
+      <ul class="cascade-timeline" id="cascade-timeline"><li>—</li></ul>
+      <div class="cascade-metrics" id="cascade-metrics">—</div>
+    </div>
+    <div class="panel-section">
+      <h3>Monte Carlo · worst</h3>
+      <table class="mc-table">
+        <thead><tr><th>#</th><th>damage</th><th>unserved</th><th>crit</th></tr></thead>
+        <tbody id="mc-worst-body"><tr><td colspan="4">—</td></tr></tbody>
+      </table>
+      <div class="mc-summary" id="mc-pareto">Pareto: —</div>
+    </div>
+    <div class="panel-section">
+      <h3>Отключены <span id="manual-count">0</span></h3>
+      <ul class="panel-list" id="manual-list"><li>—</li></ul>
+    </div>
+    <div class="panel-section">
+      <h3>Не обеспечены <span id="failed-count">0</span></h3>
+      <ul class="panel-list" id="failed-list"><li>—</li></ul>
+    </div>
+  </aside>
+
+  <script src="graph_core.js?v=15"></script>
+  <script>
+    const container = document.getElementById("graph");
+    const errorEl = document.getElementById("error");
+    let network = null, nodesDS = null, edgesDS = null;
+    let graphState = null, lastFullData = null;
+    let disabledSet = new Set(), disabledEdgesSet = new Set();
+    let highlightNodes = [], rebalancing = false, lastToggle = 0;
+    let cascadeInitialOutage = null, cascadeActive = false, preCascadeSnapshot = null;
+    let mcResults = null, mcRunning = false, mcCancel = false;
+
+    const networkOpts = {
+      physics: { enabled: false },
+      interaction: { dragNodes: true, dragView: true, zoomView: true, hover: true, selectConnectedEdges: false },
+      nodes: { shape: "dot", chosen: { label: false, node: false }, font: { size: 0, color: "rgba(0,0,0,0)" } },
+      edges: { chosen: false, selectionWidth: 0, smooth: false },
+    };
+
+    function showError(m) { errorEl.textContent = m; errorEl.style.display = m ? "block" : "none"; }
+    function nodeId(r) { return typeof r === "string" ? parseInt(r, 10) : r; }
+    function edgeKey(u, v) { return `${Math.min(u, v)},${Math.max(u, v)}`; }
+    function edgeKeyFromId(id) { const [u,v]=String(id).split("-").map(Number); return edgeKey(u,v); }
+    function yieldToUi() { return new Promise(r => setTimeout(r, 0)); }
+
+    function getRenderOpts() {
+      const typeFilter = { generator: true, consumer: true, transit: true };
+      document.querySelectorAll(".type-f").forEach(cb => { typeFilter[cb.dataset.type] = cb.checked; });
+      const statusFilter = { active: true, disabled: true, failed: true };
+      document.querySelectorAll(".status-f").forEach(cb => { statusFilter[cb.dataset.status] = cb.checked; });
+      const n = graphState?.params?.n_vertices || 100;
+      const defaults = GraphCore.defaultRenderOpts(n);
+      return {
+        labelMode: document.getElementById("label_mode").value,
+        flowThreshold: +document.getElementById("flow_threshold").value || 0,
+        showZeroEdges: n <= 300,
+        edgeMode: document.getElementById("edge_mode").value,
+        typeFilter,
+        statusFilter,
+        highlightNodes,
+      };
+    }
+
+    const ROLE_COLOR = { generator: "#4CAF50", consumer: "#F44336", transit: "#2196F3" };
+    let rebalanceTimer = null;
+
+    function nodeColor(hex, critical) {
+      const c = {
+        background: hex,
+        border: critical && hex !== "#000000" ? "#FF9800" : hex,
+        highlight: { background: hex, border: hex },
+        hover: { background: hex, border: hex },
+      };
+      if (critical && hex !== "#000000") {
+        c.highlight.border = "#F57C00";
+        c.hover.border = "#F57C00";
+      }
+      return c;
+    }
+
+    function patchNodeToggle(id) {
+      if (!nodesDS) return;
+      const n = nodesDS.get(id);
+      if (!n) return;
+      const isOff = disabledSet.has(id);
+      const base = n.role_color || ROLE_COLOR[n.role] || "#888888";
+      nodesDS.update({
+        id,
+        color: isOff ? nodeColor("#000000") : nodeColor(base, !!n.is_critical),
+        disabled_manual: isOff,
+        borderWidth: isOff ? 1 : (n.is_critical ? 3 : 0.5),
+      });
+      document.getElementById("manual-count").textContent = disabledSet.size;
+    }
+
+    function patchEdgeToggle(edgeVisId) {
+      if (!edgesDS) return;
+      const e = edgesDS.get(edgeVisId);
+      if (!e) return;
+      const isOff = disabledEdgesSet.has(edgeKeyFromId(edgeVisId));
+      const baseOpacity = e.color?.opacity ?? 0.5;
+      edgesDS.update({
+        id: edgeVisId,
+        disabled_manual_edge: isOff,
+        color: {
+          color: isOff ? "#e65100" : (e.capacity_violation ? "#c62828" : "#888888"),
+          opacity: baseOpacity,
+        },
+        width: isOff ? 2 : (e.capacity_violation ? 2.5 : 1),
+      });
+    }
+
+    function getEngOpts(fast) {
+      const opts = { flowMode: "dc", renderOpts: getRenderOpts() };
+      if (fast && lastFullData?.engineering_risk) {
+        opts.skipRisk = true;
+        opts.cachedRisk = lastFullData.engineering_risk;
+      }
+      return opts;
+    }
+
+    function getVisFilters() {
+      return {
+        voltage: document.getElementById("filter-voltage").value,
+        assetType: document.getElementById("filter-type").value,
+        topRiskOnly: document.getElementById("filter-top-risk").checked,
+      };
+    }
+
+    function filterVisData(data) {
+      const f = getVisFilters();
+      const labelMode = document.getElementById("label_mode").value;
+      const topSet = new Set((data.top_risk_objects || []).map(o =>
+        o.kind === "node" ? `n:${o.id}` : `e:${o.edgeKey}`
+      ));
+      const nodeTypes = new Set(["bus", "generator", "load", "substation"]);
+      const edgeTypes = new Set(["line", "transformer"]);
+      const nodes = data.nodes.map(n => {
+        let match = true;
+        let opacity = 1;
+        if (f.voltage && String(n.voltage_level_kv) !== f.voltage) { match = false; opacity = 0.1; }
+        if (f.assetType && nodeTypes.has(f.assetType) && n.asset_type !== f.assetType) { match = false; opacity = 0.1; }
+        if (f.assetType && edgeTypes.has(f.assetType)) { match = false; opacity = 0.1; }
+        if (f.topRiskOnly && !topSet.has(`n:${nodeId(n.id)}`)) { match = false; opacity = 0.08; }
+        const isTop = topSet.has(`n:${nodeId(n.id)}`);
+        const isHi = highlightNodes.includes(nodeId(n.id));
+        const showLabel = labelMode === "selected" && (isTop || isHi);
+        let size = n.size || 8;
+        if (isTop || isHi) size = Math.max(size, 14);
+        if (n.disabled_failed || n.cascade_failed) size = Math.max(size, 12);
+        return { ...n, opacity: match ? 1 : opacity, size, font: showLabel ? { size: 10, color: "#222" } : { size: 0, color: "rgba(0,0,0,0)" }, label: showLabel ? (n.display_name || String(n.id)) : "" };
+      });
+      const edges = data.edges.map(e => {
+        let match = true;
+        let opacity = e.color?.opacity ?? 0.5;
+        const et = e.edge_type || "line";
+        const vtag = et === "transformer" ? `${e.from_voltage_kv || ""}${e.to_voltage_kv || ""}` : String(e.voltage_level_kv || "");
+        if (f.voltage && !vtag.includes(f.voltage)) { match = false; opacity = 0.06; }
+        if (f.assetType && edgeTypes.has(f.assetType) && et !== f.assetType) { match = false; opacity = 0.06; }
+        if (f.assetType && nodeTypes.has(f.assetType)) { match = false; opacity = 0.06; }
+        const [u, v] = String(e.id).split("-").map(Number);
+        if (f.topRiskOnly && !topSet.has(`e:${edgeKey(u, v)}`)) { match = false; opacity = 0.06; }
+        const col = typeof e.color === "object" ? { ...e.color, opacity: match ? opacity : 0.06 } : e.color;
+        return { ...e, color: col };
+      });
+      return { ...data, nodes, edges };
+    }
+
+    function stateWithDisables() {
+      const edges = [...disabledEdgesSet].map(k => k.split(",").map(Number));
+      return { ...graphState, disabled_edges: edges };
+    }
+
+    function updateEngMetrics(data) {
+      const m = data?.engineering_metrics;
+      const el = document.getElementById("eng-metrics");
+      if (!m) { el.textContent = "DC: —"; return; }
+      el.innerHTML = [
+        `DC solved: <b>${m.dc_solved ? "yes" : "no"}</b>`,
+        `max loading: <b>${m.max_loading_percent}%</b>`,
+        `cap violations: <b>${m.capacity_violations}</b>`,
+        `gen: <b>${m.total_generation} MW</b>`,
+        `load: <b>${m.total_load} MW</b>`,
+        `slack: <b>${m.slack_label ?? m.slack_node ?? "—"}</b>`,
+      ].join(" · ");
+    }
+
+    function updateStats(s, data) {
+      if (!s) return;
+      document.getElementById("st-v").textContent = s.vertices;
+      document.getElementById("st-e").textContent = s.edges_count;
+      document.getElementById("st-gen").textContent = data?.engineering_metrics?.total_generation ?? s.production ?? "—";
+      document.getElementById("st-load").textContent = data?.engineering_metrics?.total_load ?? s.consumption ?? "—";
+      document.getElementById("st-dcload").textContent = s.dc_max_loading_percent ?? data?.engineering_metrics?.max_loading_percent ?? "—";
+      document.getElementById("st-cap").textContent = s.dc_capacity_violations ?? data?.engineering_metrics?.capacity_violations ?? "—";
+      document.getElementById("st-failed").textContent = s.failed_count ?? "—";
+    }
+
+    function updatePanel(data) {
+      const manual = [], failed = [];
+      for (const n of data.nodes || []) {
+        const name = n.display_name || String(n.id);
+        if (n.disabled_manual) manual.push(name);
+        else if (n.disabled_failed || n.cascade_failed) failed.push(name);
+      }
+      document.getElementById("manual-count").textContent = manual.length;
+      document.getElementById("failed-count").textContent = failed.length;
+      document.getElementById("manual-list").innerHTML = manual.slice(0, 20).map(x => `<li>${x}</li>`).join("") || "<li>—</li>";
+      document.getElementById("failed-list").innerHTML = failed.slice(0, 20).map(x => `<li>${x}</li>`).join("") || "<li>—</li>";
+    }
+
+    function renderRiskTable(data) {
+      const rows = data?.top_risk_objects || [];
+      const body = document.getElementById("risk-body");
+      if (!rows.length) { body.innerHTML = "<tr><td colspan=\"4\">—</td></tr>"; return; }
+      body.innerHTML = rows.map(r => `
+        <tr class="clickable" data-kind="${r.kind}" data-ref="${r.kind === "node" ? r.id : r.edgeKey}">
+          <td>${r.object}</td><td>${r.type}</td><td>${r.voltage_kv}</td><td><b>${r.risk_score}</b></td>
+        </tr>`).join("");
+      body.querySelectorAll("tr.clickable").forEach(tr => {
+        tr.addEventListener("click", () => {
+          const kind = tr.dataset.kind, ref = tr.dataset.ref;
+          if (kind === "node") { highlightNodes = [+ref]; rebalance(); network?.focus(+ref, { scale: 1.2, animation: true }); }
+          else {
+            const [u,v] = ref.split(",").map(Number);
+            highlightNodes = [u, v]; rebalance();
+          }
+        });
+      });
+    }
+
+    function renderN1Table(data) {
+      const rows = data?.dc_n1?.scenarios || [];
+      const body = document.getElementById("n1-body");
+      if (!rows.length) { body.innerHTML = "<tr><td colspan=\"4\">Запустите N-1</td></tr>"; return; }
+      const note = data.dc_n1?.sampled ? ` <small>(sample ${data.dc_n1.edges_scanned}/${data.dc_n1.edges_total})</small>` : "";
+      body.innerHTML = rows.map(r => `
+        <tr class="clickable" data-ek="${r.edgeKey}">
+          <td>${r.label}</td><td>${r.dc_max_loading_percent}%</td><td>${r.dc_capacity_violations}</td><td>${r.critical_unserved_count}</td>
+        </tr>`).join("") + (note ? `<tr><td colspan="4">${note}</td></tr>` : "");
+      body.querySelectorAll("tr[data-ek]").forEach(tr => {
+        tr.addEventListener("click", async () => {
+          try {
+            const data = GraphCore.applyDcN1Scenario(stateWithDisables(), tr.dataset.ek, [...disabledSet], network?.getPositions(), getEngOpts());
+            applyResult(data, false);
+          } catch (e) { showError(e.message); }
+        });
+      });
+    }
+
+    function renderCascadePanel(data) {
+      const tl = data?.dc_cascade?.timeline || [];
+      document.getElementById("cascade-timeline").innerHTML = tl.length
+        ? tl.map(t => `<li><b>${t.step}:</b> ${t.message}</li>`).join("")
+        : "<li>—</li>";
+      const m = data?.dc_cascade?.metrics;
+      const el = document.getElementById("cascade-metrics");
+      if (!m) { el.textContent = "—"; return; }
+      const topFailed = [...(m.failed_nodes || []).slice(0, 5), ...(m.failed_edges || []).slice(0, 5)];
+      el.innerHTML = [
+        `steps: <b>${m.cascade_steps}</b>`,
+        `failed assets: <b>${m.failed_assets_count}</b>`,
+        `unserved load: <b>${m.unserved_load_mw} MW</b>`,
+        `critical unserved: <b>${m.critical_unserved_count}</b>`,
+        topFailed.length ? `top failed: <b>${topFailed.join(", ")}</b>` : "",
+      ].filter(Boolean).join("<br>");
+    }
+
+    function renderMcPanels(results) {
+      const worst = results?.aggregate?.worst_scenarios || [];
+      const body = document.getElementById("mc-worst-body");
+      body.innerHTML = worst.length
+        ? worst.slice(0, 10).map(r => `<tr><td>#${r.run_id}</td><td><b>${r.damage_score}</b></td><td>${r.unserved_load_mw}</td><td>${r.critical_unserved_count}</td></tr>`).join("")
+        : "<tr><td colspan=\"4\">—</td></tr>";
+      const pareto = results?.pareto || [];
+      const pel = document.getElementById("mc-pareto");
+      if (!pareto.length) {
+        pel.textContent = results?.aggregate ? `avg damage: ${results.aggregate.avg_damage_score} · Pareto: —` : "Pareto: —";
+      } else {
+        pel.innerHTML = pareto.map(p => `Protect top ${p.protect_count}: <b>${p.damage_reduced_percent}%</b> reduction`).join("<br>");
+      }
+    }
+
+    function updateMcProgress(done, total) {
+      const wrap = document.getElementById("mc-progress-wrap");
+      wrap.style.display = total > 0 ? "block" : "none";
+      document.getElementById("mc-progress-fill").style.width = total ? `${Math.round(done / total * 100)}%` : "0%";
+      document.getElementById("mc-progress-text").textContent = `${done} / ${total}`;
+    }
+
+    function drawData(data, fit) {
+      lastFullData = data;
+      graphState = data.state;
+      disabledSet = new Set((data.disabled || []).map(nodeId));
+      disabledEdgesSet = new Set((data.disabled_edges || []).map(e => edgeKeyFromId(`${e[0]}-${e[1]}`)));
+      const visData = filterVisData(data);
+      updateStats(data.summary, data);
+      updateEngMetrics(data);
+      updatePanel(visData);
+      renderRiskTable(data);
+      if (data.dc_n1) renderN1Table(data);
+      if (data.dc_cascade) renderCascadePanel(data);
+      if (network) {
+        const pos = network.getPositions();
+        nodesDS.update(visData.nodes);
+        edgesDS.update(visData.edges);
+        network.setOptions({ interaction: { hover: visData.nodes.length < 500 } });
+        if (fit) network.fit({ animation: { duration: 300 } });
+        else for (const n of visData.nodes) { const p = pos[n.id]; if (p) nodesDS.update({ id: n.id, x: p.x, y: p.y }); }
+      } else {
+        nodesDS = new vis.DataSet(visData.nodes);
+        edgesDS = new vis.DataSet(visData.edges);
+        network = new vis.Network(container, { nodes: nodesDS, edges: edgesDS }, networkOpts);
+        setupEvents();
+        network.fit({ animation: false });
+      }
+    }
+
+    function applyResult(data, fit) {
+      drawData(data, fit);
+      document.getElementById("dc-n1-btn").disabled = false;
+      document.getElementById("cascade-run-btn").disabled = !cascadeInitialOutage;
+      document.getElementById("mc-run-btn").disabled = false;
+    }
+
+    function setupEvents() {
+      network.on("click", p => {
+        if (Date.now() - lastToggle < 200) return;
+        if (p.edges?.length) {
+          lastToggle = Date.now();
+          const edgeVisId = p.edges[0];
+          const k = edgeKeyFromId(edgeVisId);
+          if (disabledEdgesSet.has(k)) disabledEdgesSet.delete(k); else disabledEdgesSet.add(k);
+          const e = edgesDS.get(edgeVisId);
+          cascadeInitialOutage = { kind: "edge", edgeKey: k, label: e?.title || k };
+          patchEdgeToggle(edgeVisId);
+          scheduleRebalance();
+          return;
+        }
+        if (p.nodes?.length) {
+          lastToggle = Date.now();
+          const id = nodeId(p.nodes[0]);
+          highlightNodes = [id];
+          cascadeInitialOutage = { kind: "node", id, label: `#${id}` };
+          if (disabledSet.has(id)) disabledSet.delete(id); else disabledSet.add(id);
+          patchNodeToggle(id);
+          scheduleRebalance();
+        }
+      });
+    }
+
+    function scheduleRebalance() {
+      if (rebalanceTimer) clearTimeout(rebalanceTimer);
+      rebalanceTimer = setTimeout(() => {
+        rebalanceTimer = null;
+        runRebalance();
+      }, 0);
+    }
+
+    async function runRebalance() {
+      if (!graphState) return;
+      if (rebalancing) {
+        scheduleRebalance();
+        return;
+      }
+      rebalancing = true;
+      const timingEl = document.getElementById("timing");
+      const t0 = performance.now();
+      timingEl.textContent = "Пересчёт…";
+      await yieldToUi();
+      try {
+        const data = GraphCore.rebalanceEngineeringLarge(
+          stateWithDisables(),
+          [...disabledSet],
+          network?.getPositions(),
+          getEngOpts(true)
+        );
+        if (lastFullData?.dc_n1) data.dc_n1 = lastFullData.dc_n1;
+        if (lastFullData?.dc_n1_summary) data.dc_n1_summary = lastFullData.dc_n1_summary;
+        drawData(data, false);
+        document.getElementById("cascade-run-btn").disabled = cascadeActive || !cascadeInitialOutage;
+        timingEl.textContent = `Пересчёт: ${Math.round(performance.now() - t0)} мс`;
+      } catch (e) { showError(e.message); timingEl.textContent = ""; }
+      finally { rebalancing = false; }
+    }
+
+    function rebalance() {
+      scheduleRebalance();
+    }
+
+    async function generate() {
+      showError("");
+      const btn = document.getElementById("generate-btn");
+      btn.disabled = true;
+      const t0 = performance.now();
+      document.getElementById("timing").textContent = "Генерация…";
+      highlightNodes = [];
+      disabledSet = new Set();
+      disabledEdgesSet = new Set();
+      cascadeInitialOutage = null;
+      cascadeActive = false;
+      mcResults = null;
+      await yieldToUi();
+      try {
+        if (network) { network.destroy(); network = null; }
+        const data = GraphCore.generateEngineeringLarge({
+          n_vertices: +document.getElementById("n_vertices").value,
+          seed: +document.getElementById("seed").value,
+          min_degree: +document.getElementById("min_degree").value,
+          max_degree: +document.getElementById("max_degree").value,
+        }, getEngOpts());
+        applyResult(data, true);
+        document.getElementById("timing").textContent = `${Math.round(performance.now() - t0)} мс`;
+        document.getElementById("dc-n1-hint").textContent = "N-1: поочерёдное отключение рёбер · DC";
+        document.getElementById("dc-n1-hint").className = "weakest-hint";
+        renderN1Table({});
+        renderCascadePanel(null);
+        renderMcPanels(null);
+        updateMcProgress(0, 0);
+      } catch (e) { showError(e.message); document.getElementById("timing").textContent = ""; }
+      finally { btn.disabled = false; }
+    }
+
+    async function runN1() {
+      if (!graphState) return;
+      const btn = document.getElementById("dc-n1-btn");
+      btn.disabled = true;
+      document.getElementById("dc-n1-hint").textContent = "N-1 scan…";
+      const t0 = performance.now();
+      await yieldToUi();
+      try {
+        const data = GraphCore.dcN1Analysis(stateWithDisables(), [...disabledSet], network?.getPositions(), { ...getEngOpts(), applyWorst: false });
+        lastFullData = { ...lastFullData, dc_n1: data.dc_n1, dc_n1_summary: data.dc_n1_summary };
+        renderN1Table(data);
+        document.getElementById("dc-n1-hint").textContent = data.dc_n1_summary || "N-1 готово";
+        document.getElementById("dc-n1-hint").className = "weakest-hint active";
+        document.getElementById("timing").textContent = `N-1: ${Math.round(performance.now() - t0)} мс`;
+      } catch (e) { showError(e.message); }
+      finally { btn.disabled = false; }
+    }
+
+    async function runCascade() {
+      if (!graphState || !cascadeInitialOutage) { showError("Кликните узел или ребро для стартового отказа"); return; }
+      showError("");
+      preCascadeSnapshot = { graphState, disabledSet: new Set(disabledSet), disabledEdgesSet: new Set(disabledEdgesSet), lastFullData };
+      const btn = document.getElementById("cascade-run-btn");
+      btn.disabled = true;
+      await yieldToUi();
+      try {
+        const data = GraphCore.runDCCascade(stateWithDisables(), [...disabledSet], network?.getPositions(), getEngOpts(), {
+          initialOutage: cascadeInitialOutage,
+          tripThreshold: +document.getElementById("cascade-threshold").value || 120,
+          maxSteps: +document.getElementById("cascade-max-steps").value || 10,
+        });
+        cascadeActive = true;
+        lastFullData = data;
+        drawData(data, false);
+        renderCascadePanel(data);
+        document.getElementById("cascade-reset-btn").disabled = false;
+      } catch (e) { showError(e.message); }
+      finally { btn.disabled = cascadeActive; }
+    }
+
+    function resetCascade() {
+      if (!preCascadeSnapshot) return;
+      const snap = preCascadeSnapshot;
+      graphState = snap.graphState;
+      disabledSet = new Set(snap.disabledSet);
+      disabledEdgesSet = new Set(snap.disabledEdgesSet);
+      cascadeActive = false;
+      preCascadeSnapshot = null;
+      const data = GraphCore.rebalanceEngineeringLarge(stateWithDisables(), [...disabledSet], network?.getPositions(), getEngOpts());
+      if (snap.lastFullData?.dc_n1) data.dc_n1 = snap.lastFullData.dc_n1;
+      applyResult(data, false);
+      renderCascadePanel(null);
+      document.getElementById("cascade-reset-btn").disabled = true;
+    }
+
+    function getMcOpts() {
+      return {
+        runs: +document.getElementById("mc-runs").value || 100,
+        maxOutagesPerScenario: +document.getElementById("mc-max-outages").value || 3,
+        seed: +document.getElementById("seed").value || 42,
+        useCascade: true,
+        tripThreshold: +document.getElementById("cascade-threshold").value || 120,
+        maxCascadeSteps: +document.getElementById("cascade-max-steps").value || 10,
+      };
+    }
+
+    async function runMonteCarlo() {
+      if (!graphState || mcRunning) return;
+      mcRunning = true; mcCancel = false;
+      mcResults = { runs: [], aggregate: null, pareto: null };
+      document.getElementById("mc-run-btn").disabled = true;
+      document.getElementById("mc-stop-btn").disabled = false;
+      const mcOpts = getMcOpts();
+      const batchSize = mcOpts.runs <= 100 ? mcOpts.runs : 50;
+      let completed = 0;
+      updateMcProgress(0, mcOpts.runs);
+      try {
+        while (completed < mcOpts.runs && !mcCancel) {
+          const batch = GraphCore.runMonteCarloBatch(stateWithDisables(), [...disabledSet], getEngOpts(), mcOpts, { startRun: completed, count: batchSize });
+          mcResults.runs.push(...batch.runs);
+          completed = batch.progress.completed;
+          mcResults.aggregate = GraphCore.aggregateMonteCarloRuns(mcResults.runs);
+          updateMcProgress(completed, mcOpts.runs);
+          renderMcPanels(mcResults);
+          if (completed < mcOpts.runs) await yieldToUi();
+        }
+      } catch (e) { showError(e.message); }
+      finally {
+        mcRunning = false;
+        document.getElementById("mc-run-btn").disabled = false;
+        document.getElementById("mc-stop-btn").disabled = true;
+        document.getElementById("mc-reset-btn").disabled = !mcResults?.runs?.length;
+      }
+      if (!mcCancel && mcResults?.runs?.length) {
+        document.getElementById("mc-progress-text").textContent = "Pareto…";
+        await yieldToUi();
+        try {
+          mcResults.pareto = GraphCore.computeParetoRecommendations(stateWithDisables(), [...disabledSet], getEngOpts(), mcOpts, mcResults.aggregate);
+          renderMcPanels(mcResults);
+        } catch (e) { showError(e.message); }
+        document.getElementById("mc-progress-text").textContent = `${mcResults.runs.length} runs · готово`;
+      }
+    }
+
+    document.querySelectorAll(".preset-row button").forEach(b => {
+      b.addEventListener("click", () => {
+        document.querySelectorAll(".preset-row button").forEach(x => x.classList.remove("active"));
+        b.classList.add("active");
+        document.getElementById("n_vertices").value = b.dataset.n;
+        if (+b.dataset.n >= 1000) document.getElementById("edge_mode").value = "active";
+      });
+    });
+    document.getElementById("generate-btn").addEventListener("click", generate);
+    document.getElementById("dc-n1-btn").addEventListener("click", runN1);
+    document.getElementById("cascade-run-btn").addEventListener("click", runCascade);
+    document.getElementById("cascade-reset-btn").addEventListener("click", resetCascade);
+    document.getElementById("mc-run-btn").addEventListener("click", runMonteCarlo);
+    document.getElementById("mc-stop-btn").addEventListener("click", () => { mcCancel = true; });
+    document.getElementById("mc-reset-btn").addEventListener("click", () => { mcResults = null; renderMcPanels(null); updateMcProgress(0, 0); });
+    ["filter-voltage", "filter-type", "filter-top-risk", "label_mode", "flow_threshold", "edge_mode"].forEach(id => {
+      document.getElementById(id).addEventListener("change", () => { if (lastFullData) drawData(lastFullData, false); else rebalance(); });
+    });
+    document.querySelectorAll(".type-f, .status-f").forEach(cb => cb.addEventListener("change", rebalance));
+    document.getElementById("toggle-panels-btn").addEventListener("click", () => document.body.classList.toggle("graph-only"));
+  </script>
+</body>
+</html>

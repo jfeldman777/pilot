@@ -3117,6 +3117,77 @@
     return objects;
   }
 
+  function computeEngineeringRiskFast(state, G, disabled, disabledEdges, servedBefore, dcFlow = {}) {
+    const kv = state.voltage_level_kv || {};
+    const nodeTypes = state.node_types || {};
+    const nodeRepair = state.node_repair_time_days || {};
+    const edgeRepair = state.edge_repair_time_days || {};
+    const edgeTypes = state.edge_types || {};
+    const edgeCapacity = state.edge_capacity || {};
+    const objects = [];
+
+    for (const v of G.nodes()) {
+      if (disabled.has(v)) continue;
+      const role = state.roles[v];
+      const baseImpact = role === "consumer"
+        ? (state.consumption[v] || 0)
+        : role === "generator"
+          ? (state.production[v] || 0) * 0.5
+          : Math.min(40, G.degree(v) * 2);
+      const repair = nodeRepair[v] || 1;
+      const redundancy = 1 / Math.max(1, G.degree(v));
+      const risk = Math.round(baseImpact * repair * redundancy);
+      objects.push({
+        kind: "node",
+        id: v,
+        object: `${nodeName(v, G.n)} (#${v})`,
+        type: nodeTypes[v] || assetTypeFromRole(role),
+        voltage_kv: kv[v] ?? null,
+        impact_mw: Math.round(baseImpact * 10) / 10,
+        repair_time_days: repair,
+        redundancy_factor: Math.round(redundancy * 1000) / 1000,
+        risk_score: risk,
+        repair_time_source: "SYNTHETIC",
+        risk_method: "fast screening (degree/load)",
+      });
+    }
+
+    for (const [u, v] of G.edges) {
+      const ek = edgeKey(u, v);
+      if (disabled.has(u) || disabled.has(v) || disabledEdges.has(ek)) continue;
+      const cap = getEdgeCapacityMw(edgeCapacity, u, v);
+      const f = Math.abs(dcFlow[ek] || 0);
+      const loading = cap > 0 ? f / cap : 0;
+      const impact = Math.round((loading * cap * 0.15 + loading * 25) * 10) / 10;
+      const repair = edgeRepair[ek] || 1;
+      const redundancy = 1 / Math.max(1, Math.min(G.degree(u), G.degree(v)));
+      const risk = Math.round(impact * repair * redundancy);
+      const et = edgeTypes[ek] || "line";
+      const voltage = et === "transformer"
+        ? `${state.edge_from_kv[ek] || "?"}→${state.edge_to_kv[ek] || "?"}`
+        : String(state.edge_voltage_kv[ek] || kv[u] || "—");
+      objects.push({
+        kind: "edge",
+        id: `${u}-${v}`,
+        edgeKey: ek,
+        u,
+        v,
+        object: `${nodeName(u, G.n)}—${nodeName(v, G.n)}`,
+        type: et,
+        voltage_kv: voltage,
+        impact_mw: impact,
+        repair_time_days: repair,
+        redundancy_factor: Math.round(redundancy * 1000) / 1000,
+        risk_score: risk,
+        repair_time_source: "SYNTHETIC",
+        risk_method: "fast screening (DC loading)",
+      });
+    }
+
+    objects.sort((a, b) => b.risk_score - a.risk_score || b.impact_mw - a.impact_mw);
+    return objects;
+  }
+
   function assetTypeFromRole(role) {
     if (role === "generator") return "generator";
     if (role === "consumer") return "load";
@@ -3486,7 +3557,7 @@
         const labelFn = nVerts > LETTERS.length
           ? (a, b, m, d, c, fm) => engineeringGeoEdgeLabel(a, b, m, d, c, fm, nVerts, false)
           : (a, b, m, d, c, fm) => engineeringEdgeLabel(a, b, m, d, c, fm);
-        edge.label = labelFn(u, v, mf, df, cap, flowMode);
+        edge.label = engOpts.largeSchematic ? "" : labelFn(u, v, mf, df, cap, flowMode);
         if (flowMode === "compare") {
           edge.title = `math ${Math.round(mf)} MW · dc ${Math.round(df * 10) / 10} MW · Δ ${edge.flow_difference}`;
         } else if (flowMode === "dc") {
@@ -3497,6 +3568,24 @@
     }
     applyCascadeVisStyles(base, engOpts);
     return base;
+  }
+
+  function buildEngineeringLargeVisData(G, state, mathFlow, surplus, failed, served, dcResult, flowMode, disabled, disabledEdges, positions, seed, engOpts = {}) {
+    const dcFlow = dcResult.dcFlow || {};
+    const displayFlow = flowMode === "dc" ? dcFlow : mathFlow;
+    const renderOpts = engOpts.renderOpts || defaultRenderOpts(G.n);
+    const reinforcedSet = new Set((state.reinforced_edges || []).map(k => (typeof k === "string" ? k : edgeKey(k[0], k[1]))));
+    const newSet = new Set((state.new_edges || []).map(k => (typeof k === "string" ? k : edgeKey(k[0], k[1]))));
+    const built = buildLargeVisData(
+      G, state.roles, state.production, state.consumption, displayFlow, surplus, seed,
+      disabled, failed, positions, disabledEdges, renderOpts,
+      state.edge_capacity, state.priority, reinforcedSet, newSet, served
+    );
+    return enrichEngineeringVisObjects(
+      built, G, state, state.roles, state.production, state.consumption,
+      mathFlow, dcFlow, dcResult, flowMode,
+      state.edge_capacity, state.edge_reactance, { ...engOpts, largeSchematic: true }
+    );
   }
 
   function buildEngineeringVisData(G, state, mathFlow, surplus, failed, served, dcResult, flowMode, disabled, disabledEdges, positions, seed, engOpts = {}) {
@@ -3537,7 +3626,12 @@
     state.theta = dcResult.theta;
     state.slack_node = dcResult.slack;
     const dcFeas = analyzeDCFeasibility(G, dcResult.dcFlow || {}, state.edge_capacity, disabled, disabledEdges);
-    const riskObjects = computeEngineeringRisk(state, G, disabled, disabledEdges, served);
+    const useFastRisk = params.n_vertices > 250;
+    const riskObjects = engOpts.skipRisk && engOpts.cachedRisk
+      ? engOpts.cachedRisk
+      : useFastRisk
+        ? computeEngineeringRiskFast(state, G, disabled, disabledEdges, served, dcResult.dcFlow || {})
+        : computeEngineeringRisk(state, G, disabled, disabledEdges, served);
     const riskByNode = new Map();
     const riskByEdge = new Map();
     for (const o of riskObjects) {
@@ -3546,15 +3640,22 @@
     }
     const visEngOpts = { ...engOpts, riskByNode, riskByEdge };
     const isGeo = isEngineeringGeoState(state);
+    const isLargeSchematic = !isGeo && (params.n_vertices > LETTERS.length || params.mode === "engineering_large");
+    const largeRenderOpts = engOpts.renderOpts || defaultRenderOpts(params.n_vertices);
     const { nodes, edges } = isGeo
       ? buildEngineeringMapVisData(
         G, state, mathFlow, surplus, failed, served, dcResult, flowMode,
         disabled, disabledEdges, state.geo, positions, seed, visEngOpts
       )
-      : buildEngineeringVisData(
-        G, state, mathFlow, surplus, failed, served, dcResult, flowMode,
-        disabled, disabledEdges, positions, seed, visEngOpts
-      );
+      : isLargeSchematic
+        ? buildEngineeringLargeVisData(
+          G, state, mathFlow, surplus, failed, served, dcResult, flowMode,
+          disabled, disabledEdges, positions, seed, { ...visEngOpts, renderOpts: largeRenderOpts }
+        )
+        : buildEngineeringVisData(
+          G, state, mathFlow, surplus, failed, served, dcResult, flowMode,
+          disabled, disabledEdges, positions, seed, visEngOpts
+        );
     const balances = nodeBalance(G, state.production, state.consumption, mathFlow, surplus);
     const checks = isGeo
       ? runMapChecks(G, state.roles, state.production, state.consumption, surplus, balances, params, disabled, failed)
@@ -4195,24 +4296,60 @@
     return b.critical_unserved_count - a.critical_unserved_count;
   }
 
-  function scanDcN1Scenarios(stateJson, disabledList = []) {
+  function selectN1EdgeSample(G, state, baseDisabled) {
+    const n = G.n;
+    const all = G.edges;
+    let maxEdges = all.length;
+    if (n <= 100) return all;
+    if (n <= 300) maxEdges = Math.min(80, all.length);
+    else if (n <= 600) maxEdges = Math.min(50, all.length);
+    else maxEdges = Math.min(30, all.length);
+    if (all.length <= maxEdges) return all;
+
+    let topEdgeKeys;
+    if (n > 250) {
+      const ranked = all
+        .map(([u, v]) => ({ u, v, ek: edgeKey(u, v), score: G.degree(u) + G.degree(v) }))
+        .sort((a, b) => b.score - a.score);
+      topEdgeKeys = ranked.slice(0, Math.floor(maxEdges * 0.6)).map(e => e.ek);
+    } else {
+      const risk = computeEngineeringRisk(state, G, baseDisabled, edgeKeySet(state.disabled_edges), {});
+      topEdgeKeys = risk.filter(o => o.kind === "edge").slice(0, Math.floor(maxEdges * 0.6)).map(o => o.edgeKey);
+    }
+    const picked = new Set(topEdgeKeys);
+    const rng = new Random((state.params.seed || 0) + 7717);
+    const rest = all.filter(([u, v]) => !picked.has(edgeKey(u, v)));
+    rng.shuffle(rest);
+    for (const [u, v] of rest) {
+      if (picked.size >= maxEdges) break;
+      picked.add(edgeKey(u, v));
+    }
+    return all.filter(([u, v]) => picked.has(edgeKey(u, v)));
+  }
+
+  function scanDcN1Scenarios(stateJson, disabledList = [], opts = {}) {
     const state = stateFromJson(stateJson);
     const baseDisabled = new Set(disabledList.map(Number));
     const G = stateToGraph(state);
     initEngineeringState(state, state.params.seed);
+    const edgeList = opts.edgeList || (opts.fullScan ? G.edges : selectN1EdgeSample(G, state, baseDisabled));
+    const sampled = edgeList.length < G.edges.length;
+    const lite = G.n > 400;
     const scenarios = [];
-    for (const [u, v] of G.edges) {
+    for (const [u, v] of edgeList) {
       const ek = edgeKey(u, v);
       const trialEdges = edgeKeySet(state.disabled_edges);
       trialEdges.add(ek);
       const dcResult = solveDCPowerFlow(G, state, baseDisabled, trialEdges);
       const dcFeas = analyzeDCFeasibility(G, dcResult.dcFlow || {}, state.edge_capacity, baseDisabled, trialEdges);
-      const { failed, served } = computeFlowsFromState(G, state, baseDisabled, trialEdges);
       let criticalUnserved = 0;
-      for (const node of G.nodes()) {
-        if (state.roles[node] !== "consumer" || baseDisabled.has(node) || failed.has(node)) continue;
-        if ((state.priority[node] || "") === "critical" && (served[node] || 0) < (state.consumption[node] || 0) - 1e-6) {
-          criticalUnserved++;
+      if (!lite) {
+        const { failed, served } = computeFlowsFromState(G, state, baseDisabled, trialEdges);
+        for (const node of G.nodes()) {
+          if (state.roles[node] !== "consumer" || baseDisabled.has(node) || failed.has(node)) continue;
+          if ((state.priority[node] || "") === "critical" && (served[node] || 0) < (state.consumption[node] || 0) - 1e-6) {
+            criticalUnserved++;
+          }
         }
       }
       scenarios.push({
@@ -4228,7 +4365,13 @@
       });
     }
     scenarios.sort(rankN1Scenario);
-    return { scenarios, worst: scenarios[0] || null };
+    return {
+      scenarios,
+      worst: scenarios[0] || null,
+      sampled,
+      edges_scanned: edgeList.length,
+      edges_total: G.edges.length,
+    };
   }
 
   function applyDcN1Scenario(stateJson, edgeKey, disabledList = [], positions = null, engOpts = {}) {
@@ -4244,15 +4387,58 @@
     );
   }
 
+  function generateEngineeringLarge(rawParams, engOpts = {}) {
+    const params = parseLargeParams(rawParams);
+    validateLargeParams(params);
+    params.mode = "engineering_large";
+    const rng = new Random(params.seed);
+    const roles = assignRoles(params.n_vertices, params.n_generators, params.n_consumers, params.seed);
+    const G = generateLargeConnectedGraph(params.n_vertices, params.min_degree, params.max_degree, roles, params.seed);
+    const generators = G.nodes().filter(v => roles[v] === "generator");
+    const consumers = G.nodes().filter(v => roles[v] === "consumer");
+    const productionList = splitTotal(params.total_production, params.n_generators, rng);
+    const consumptionList = splitTotal(params.total_consumption, params.n_consumers, rng);
+    const production = {};
+    const consumption = {};
+    generators.forEach((v, i) => (production[v] = productionList[i]));
+    consumers.forEach((v, i) => (consumption[v] = consumptionList[i]));
+    const state = {
+      params,
+      roles,
+      edges: G.edges.map(e => [...e]),
+      production,
+      consumption,
+    };
+    initEngineeringState(state, params.seed);
+    const renderOpts = engOpts.renderOpts || defaultRenderOpts(params.n_vertices);
+    return evaluateStateEngineering(state, new Set(), null, { ...engOpts, renderOpts });
+  }
+
+  function rebalanceEngineeringLarge(stateJson, disabledList, positions, engOpts) {
+    const state = stateFromJson(stateJson);
+    const n = state.params.n_vertices;
+    const renderOpts = engOpts.renderOpts || defaultRenderOpts(n);
+    return evaluateStateEngineering(state, new Set(disabledList.map(Number)), positions, { ...engOpts, renderOpts });
+  }
+
   function dcN1Analysis(stateJson, disabledList = [], positions = null, engOpts = {}) {
     const applyWorst = engOpts.applyWorst !== false;
-    const { scenarios, worst } = scanDcN1Scenarios(stateJson, disabledList);
+    const scanResult = scanDcN1Scenarios(stateJson, disabledList, engOpts);
+    const { scenarios, worst, sampled, edges_scanned, edges_total } = scanResult;
     const state = stateFromJson(stateJson);
     const baseDisabled = new Set(disabledList.map(Number));
     const result = evaluateStateEngineering(state, baseDisabled, positions, engOpts);
-    result.dc_n1 = { scenarios: scenarios.slice(0, 15), worst };
+    const topN = engOpts.n1TopN || 10;
+    result.dc_n1 = {
+      scenarios: scenarios.slice(0, topN),
+      worst,
+      sampled,
+      edges_scanned,
+      edges_total,
+    };
     if (worst) {
-      result.dc_n1_summary = `Худшее N-1: ${worst.label} · DC violations ${worst.dc_capacity_violations} · loading ${worst.dc_max_loading_percent}%`;
+      const sampleNote = sampled ? ` (sampled ${edges_scanned}/${edges_total} edges)` : "";
+      result.dc_n1_summary = `Худшее N-1: ${worst.label} · DC violations ${worst.dc_capacity_violations} · loading ${worst.dc_max_loading_percent}%${sampleNote}`;
       if (applyWorst) {
         const hi = new Set(engOpts.highlightNodes || []);
         hi.add(worst.u);
@@ -4298,8 +4484,12 @@
     findWeakestVertexLarge,
     findWeakestEdgeLarge,
     generateEngineering,
+    generateEngineeringLarge,
     generateEngineeringGeo,
     rebalanceEngineering,
+    rebalanceEngineeringLarge,
+    buildEngineeringLargeVisData,
+    selectN1EdgeSample,
     evaluateStateEngineering,
     solveDCPowerFlow,
     dcN1Analysis,
@@ -4311,6 +4501,7 @@
     computeParetoRecommendations,
     previewMonteCarloScenario,
     computeDamageScore,
-    initEngineeringState,
+    computeEngineeringRisk,
+    computeEngineeringRiskFast,
   };
 })(typeof window !== "undefined" ? window : globalThis);
