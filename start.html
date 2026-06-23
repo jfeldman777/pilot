@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Начните здесь — MVP demo</title>
+  <link rel="stylesheet" href="home-nav.css">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", Arial, sans-serif;
+      margin: 0;
+      min-height: 100vh;
+      background: linear-gradient(160deg, #e8eaf6 0%, #f5f6f8 45%, #fff8e1 100%);
+      color: #222;
+      line-height: 1.55;
+    }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 56px 20px 48px; }
+    h1 { font-size: 1.75rem; color: #283593; margin: 0 0 8px; }
+    .sub { color: #555; font-size: 14px; margin-bottom: 24px; }
+    .disclaimer {
+      background: #ffebee;
+      border: 1px solid #ef9a9a;
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-size: 12px;
+      color: #b71c1c;
+      font-weight: 600;
+      margin-bottom: 24px;
+    }
+    .steps { display: flex; flex-direction: column; gap: 14px; margin-bottom: 28px; }
+    .step {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 16px 18px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    .step-num {
+      flex-shrink: 0;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #5c6bc0;
+      color: #fff;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+    }
+    .step b { display: block; font-size: 15px; color: #283593; margin-bottom: 4px; }
+    .step p { margin: 0; font-size: 13px; color: #444; }
+    .cta {
+      display: block;
+      text-align: center;
+      padding: 16px 20px;
+      background: linear-gradient(180deg, #ff9800 0%, #f57c00 100%);
+      color: #fff;
+      font-size: 16px;
+      font-weight: 700;
+      text-decoration: none;
+      border-radius: 10px;
+      box-shadow: 0 4px 14px rgba(245, 124, 0, 0.35);
+      margin-bottom: 12px;
+    }
+    .cta:hover { filter: brightness(1.05); }
+    .cta-secondary {
+      display: block;
+      text-align: center;
+      padding: 12px;
+      background: #fff;
+      border: 2px solid #5c6bc0;
+      color: #3949ab;
+      font-weight: 600;
+      text-decoration: none;
+      border-radius: 8px;
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+    .links { margin-top: 24px; font-size: 13px; text-align: center; }
+    .links a { color: #1565c0; font-weight: 600; text-decoration: none; margin: 0 8px; }
+    .links a:hover { text-decoration: underline; }
+    .time { text-align: center; font-size: 12px; color: #888; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <a href="home.html" class="home-btn" title="Все 8 режимов">⌂</a>
+  <div class="wrap">
+    <h1>Самостоятельный просмотр (~7 мин)</h1>
+    <p class="sub">Screening-MVP контура <b>A1 — физическая безопасность сети</b>. Synthetic data. Not operational.</p>
+
+    <div class="disclaimer">
+      Это не операционный клон энергосистемы Украины и не инженерная рекомендация.
+      Демонстрация идеи: сеть → сценарии поражения → слабые места → что укрепить первым.
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <span class="step-num">1</span>
+        <div>
+          <b>Запустите автодемо War-Gaming</b>
+          <p>Кнопка ниже откроет режим 8, построит сеть (100 узлов), прогонит 100 сценариев поражения и покажет худший случай + Pareto.</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span>
+        <div>
+          <b>Посмотрите карту и Pareto</b>
+          <p>Кластеры узлов, топ risk-линии, кривая «защита топ-N → % снижения ущерба». Кликните Protect top 3 на карте.</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span>
+        <div>
+          <b>Прочитайте roadmap</b>
+          <p>Таблица: что из вашего ТЗ уже есть, что — этап 2. Честное сравнение с radai-1984.dev.</p>
+        </div>
+      </div>
+    </div>
+
+    <a href="eng-large-map.html?demo=1" class="cta">★ Демо: волна ударов (режим 8)</a>
+    <a href="eng-large-map.html" class="cta-secondary">Режим 8 вручную</a>
+    <p class="time">Автодемо ~2–3 мин · полный просмотр ~7 мин</p>
+
+    <div class="links">
+      <a href="readme.html">README</a>
+      <a href="roadmap.html">Roadmap / ТЗ</a>
+      <a href="home.html">Все 8 режимов</a>
+    </div>
+  </div>
+</body>
+</html>

@@ -46,19 +46,18 @@
 
 ## Быстрый smoke-test (5 мин)
 
-1. `python app.py` → http://127.0.0.1:5001
-2. **home** → режим **8** → Построить (100 узлов)
-3. Monte Carlo 100 runs → worst scenario → Pareto top 3
+1. `python app.py` → **start.html** → «Демо: волна ударов»
+2. Дождаться Pareto-кривой и подсветки top 3
+3. **roadmap.html** — таблица соответствия ТЗ
 4. Home → режим **1** → Сгенерировать — sanity check
-5. Ctrl+F5 на режиме 8 — повтор без ошибок в консоли (F12)
 
 ## Ссылка для заказчика
 
 ```text
-Локально:  http://127.0.0.1:5001
-Деплой:    <ваш URL> → home.html
-Главный demo: eng-large-map.html
-README:    README.md (раздел «Главный demo path»)
+Локально:  http://127.0.0.1:5001/start.html
+Деплой:    <ваш URL>/start.html
+Автодемо:  eng-large-map.html?demo=1
+README:    readme.html · roadmap.html
 ```
 
 ## Если «песочные часы» на кнопках

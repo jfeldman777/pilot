@@ -43,6 +43,13 @@
     .filter-group label { display: block; margin: 3px 0; cursor: pointer; }
     .filter-group h3 { font-size: 11px; margin-bottom: 6px; color: #555; }
     button.primary { width: 100%; padding: 10px; background: #5c6bc0; color: #fff; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; }
+    button.demo-strike-btn {
+      width: 100%; margin-top: 8px; padding: 11px;
+      background: linear-gradient(180deg, #ff9800 0%, #f57c00 100%);
+      color: #fff; border: none; border-radius: 6px; font-weight: 700; cursor: pointer;
+      box-shadow: 0 2px 8px rgba(245, 124, 0, 0.3);
+    }
+    button.demo-strike-btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
     button.secondary { width: 100%; margin-top: 8px; padding: 9px; background: #fff; color: #5c6bc0; border: 1px solid #5c6bc0; border-radius: 6px; font-weight: 600; cursor: pointer; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     .hint-box { font-size: 11px; color: #555; background: #f7f7f7; border-radius: 6px; padding: 8px; margin: 8px 0; line-height: 1.45; }
@@ -74,6 +81,10 @@
     .cascade-timeline li { padding: 4px 0; border-bottom: 1px solid #eee; }
     .cascade-metrics { font-size: 10px; line-height: 1.5; background: #fff8e1; border: 1px solid #ffe082; border-radius: 6px; padding: 8px; margin-top: 6px; }
     .mc-summary { font-size: 10px; line-height: 1.5; background: #e3f2fd; border: 1px solid #90caf9; border-radius: 6px; padding: 8px; margin-top: 6px; }
+    .pareto-chart-wrap { margin-top: 8px; padding: 8px; background: #fafafa; border: 1px solid #e0e0e0; border-radius: 6px; }
+    .pareto-chart-wrap h4 { font-size: 10px; margin: 0 0 6px; color: #555; font-weight: 600; }
+    .pareto-chart-wrap svg { width: 100%; height: 110px; display: block; }
+    .pareto-chart-legend { font-size: 9px; color: #777; margin-top: 4px; }
     .pareto-link { cursor: pointer; text-decoration: underline; color: #1565c0; }
     .pareto-link.selected { font-weight: 700; color: #e65100; }
     .node-marker { width: 14px; height: 14px; border-radius: 50%; border: 1px solid #222; }
@@ -98,8 +109,8 @@
     </div>
     <div class="demo-path-hint">
       <b>Для показа (~1 мин)</b>
-      Построить → Monte Carlo → клик <b>worst scenario</b> → <b>Pareto top 1/3/5</b>.
-      На карте по умолчанию: кластеры узлов + топ-10 risk линий (не паутина).
+      <b>Построить</b> → <b>War-Gaming</b> → клик <b>worst scenario</b> → <b>Pareto top 1/3/5</b>.
+      На карте: кластеры + топ-10 risk линий. Или кнопка <b>«Демо: волна ударов»</b> ниже.
     </div>
     <div class="sidebar-panel">
       <div class="preset-row">
@@ -123,6 +134,7 @@
       </div>
       <p id="pool-hint" style="font-size:10px;color:#888;margin-bottom:8px">Загрузка реестра…</p>
       <button type="button" id="generate-btn" class="primary" disabled>Построить на карте</button>
+      <button type="button" id="demo-strike-btn" class="demo-strike-btn" disabled>★ Демо: волна ударов</button>
 
       <div class="filter-group">
         <h3>Фильтры</h3>
@@ -190,27 +202,33 @@
       <button type="button" id="cascade-run-btn" class="secondary" disabled>Запустить каскад</button>
       <button type="button" id="cascade-reset-btn" class="secondary" disabled>Сбросить каскад</button>
 
-      <div class="field-row" style="margin-top:8px">
-        <div class="field">
-          <label for="mc-runs">Monte Carlo</label>
-          <select id="mc-runs">
-            <option value="100">100</option>
-            <option value="1000">1000</option>
-            <option value="5000">5000</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="mc-max-outages">Outages/run</label>
-          <select id="mc-max-outages">
-            <option value="1">1</option>
-            <option value="2">2</option>
-            <option value="3" selected>3</option>
-          </select>
+      <div class="filter-group" id="war-gaming-section">
+        <h3>War-Gaming · сценарии поражения</h3>
+        <p style="font-size:10px;color:#666;line-height:1.4;margin-bottom:8px">
+          Случайные отказы объектов за прогон (N-k screening). Не модель погоды — имитация волн поражения сети.
+        </p>
+        <div class="field-row">
+          <div class="field">
+            <label for="mc-runs">Прогонов</label>
+            <select id="mc-runs">
+              <option value="100">100</option>
+              <option value="1000">1000</option>
+              <option value="5000">5000</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="mc-max-outages">Отказов/сценарий</label>
+            <select id="mc-max-outages">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3" selected>3</option>
+            </select>
+          </div>
         </div>
       </div>
-      <button type="button" id="mc-run-btn" class="secondary" disabled>Monte Carlo</button>
-      <button type="button" id="mc-stop-btn" class="secondary" disabled>Стоп MC</button>
-      <button type="button" id="mc-reset-btn" class="secondary" disabled>Сброс MC</button>
+      <button type="button" id="mc-run-btn" class="secondary" disabled>Запустить War-Gaming</button>
+      <button type="button" id="mc-stop-btn" class="secondary" disabled>Остановить</button>
+      <button type="button" id="mc-reset-btn" class="secondary" disabled>Сбросить</button>
       <div class="mc-progress" id="mc-progress-wrap" style="display:none">
         <div class="mc-progress-bar"><div class="mc-progress-fill" id="mc-progress-fill"></div></div>
         <div class="mc-progress-text" id="mc-progress-text">0 / 0</div>
@@ -264,19 +282,24 @@
       <ul class="cascade-timeline" id="cascade-timeline"><li>—</li></ul>
       <div class="cascade-metrics" id="cascade-metrics">—</div>
     </div>
-    <div class="panel-section">
-      <h3>Monte Carlo · worst</h3>
+    <div class="panel-section" id="war-gaming-panel">
+      <h3>War-Gaming · худшие сценарии</h3>
       <div style="overflow-x:auto">
         <table class="mc-table">
           <thead><tr><th>#</th><th>damage</th><th>unserved</th><th>crit</th><th>steps</th></tr></thead>
-          <tbody id="mc-worst-body"><tr><td colspan="5">—</td></tr></tbody>
+          <tbody id="mc-worst-body"><tr><td colspan="5">Запустите War-Gaming</td></tr></tbody>
         </table>
       </div>
-      <div class="mc-summary" id="mc-pareto-summary">После Monte Carlo: кликните Protect top 1/3/5 для подсветки на карте</div>
+      <div class="pareto-chart-wrap" id="pareto-chart-wrap" style="display:none">
+        <h4>Pareto: накопленное снижение риска при защите топ-N</h4>
+        <div id="pareto-chart"></div>
+        <div class="pareto-chart-legend">Ось X — число защищаемых объектов · Y — % накопленного вклада в риск (screening)</div>
+      </div>
+      <div class="mc-summary" id="mc-pareto-summary">После War-Gaming: кликните Protect top 1/3/5 для подсветки на карте</div>
     </div>
   </aside>
 
-  <script src="graph_core.js?v=17"></script>
+  <script src="graph_core.js?v=18"></script>
   <script>
     const ROLE_COLORS = { generator: "#4CAF50", consumer: "#F44336", transit: "#2196F3" };
     const ASSET_NAMES = { generator: "generation", consumer: "load", transit: "transit" };
@@ -640,7 +663,65 @@
       ].join(" · ");
     }
 
+    function buildParetoCurvePoints(aggregate) {
+      const objs = aggregate?.object_frequency || [];
+      if (!objs.length) return [];
+      const weights = objs.map(o => (o.avg_damage_score || 0) * (o.frequency_in_worst + 1));
+      const total = weights.reduce((a, b) => a + b, 0) || 1;
+      let cum = 0;
+      const points = [];
+      for (let i = 0; i < Math.min(objs.length, 12); i++) {
+        cum += weights[i];
+        points.push({ n: i + 1, pct: Math.round((cum / total) * 1000) / 10 });
+      }
+      return points;
+    }
+
+    function renderParetoChart(aggregate, pareto) {
+      const wrap = document.getElementById("pareto-chart-wrap");
+      const host = document.getElementById("pareto-chart");
+      const points = buildParetoCurvePoints(aggregate);
+      if (!points.length) {
+        wrap.style.display = "none";
+        host.innerHTML = "";
+        return;
+      }
+      wrap.style.display = "block";
+      const w = 240, h = 100, pad = { l: 28, r: 8, t: 8, b: 22 };
+      const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+      const path = points.map((p, i) => {
+        const x = pad.l + (points.length > 1 ? (i / (points.length - 1)) * iw : 0);
+        const y = pad.t + ih - (p.pct / 100) * ih;
+        return `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(" ");
+      const markers = (pareto || []).map(p => {
+        const pt = points[Math.min(p.protect_count, points.length) - 1];
+        if (!pt) return "";
+        const i = pt.n - 1;
+        const x = pad.l + (points.length > 1 ? (i / (points.length - 1)) * iw : 0);
+        const y = pad.t + ih - (pt.pct / 100) * ih;
+        const sel = paretoHighlightCount === p.protect_count;
+        return `<circle cx="${x}" cy="${y}" r="${sel ? 5 : 4}" fill="${sel ? "#e65100" : "#5c6bc0"}" stroke="#fff" stroke-width="1"/>
+          <text x="${x}" y="${y - 7}" text-anchor="middle" font-size="8" fill="#e65100" font-weight="700">${p.protect_count}</text>`;
+      }).join("");
+      host.innerHTML = `<svg viewBox="0 0 ${w} ${h}" aria-label="Pareto curve">
+        <line x1="${pad.l}" y1="${pad.t + ih}" x2="${pad.l + iw}" y2="${pad.t + ih}" stroke="#ccc"/>
+        <line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${pad.t + ih}" stroke="#ccc"/>
+        <text x="4" y="${pad.t + 8}" font-size="7" fill="#888">100%</text>
+        <text x="4" y="${pad.t + ih}" font-size="7" fill="#888">0%</text>
+        <text x="${pad.l + iw / 2}" y="${h - 4}" text-anchor="middle" font-size="7" fill="#888">топ-N объектов</text>
+        <path d="${path}" fill="none" stroke="#5c6bc0" stroke-width="2"/>
+        ${markers}
+      </svg>`;
+    }
+
     function renderMonteCarloPanels(results) {
+      if (!results) {
+        document.getElementById("mc-worst-body").innerHTML = "<tr><td colspan=\"5\">Запустите War-Gaming</td></tr>";
+        document.getElementById("mc-pareto-summary").textContent = "После War-Gaming: кликните Protect top 1/3/5 для подсветки на карте";
+        renderParetoChart(null, null);
+        return;
+      }
       const worst = results?.aggregate?.worst_scenarios || [];
       const body = document.getElementById("mc-worst-body");
       body.innerHTML = worst.length
@@ -648,22 +729,23 @@
           <tr class="clickable${selectedMcRunId === r.run_id ? " selected" : ""}" data-run-id="${r.run_id}">
             <td>#${r.run_id}</td><td><b>${r.damage_score}</b></td><td>${r.unserved_load_mw}</td><td>${r.critical_unserved_count}</td><td>${r.cascade_steps}</td>
           </tr>`).join("")
-        : "<tr><td colspan=\"5\">—</td></tr>";
+        : "<tr><td colspan=\"5\">Запустите War-Gaming</td></tr>";
       body.querySelectorAll("tr.clickable").forEach(tr => {
         tr.addEventListener("click", () => previewMcScenario(+tr.dataset.runId));
       });
       const pareto = results?.pareto || [];
+      renderParetoChart(results?.aggregate, pareto);
       const pel = document.getElementById("mc-pareto-summary");
       if (!pareto.length) {
         pel.textContent = results?.aggregate
           ? `avg damage: ${results.aggregate.avg_damage_score} · кликните Protect top 1/3/5`
-          : "После Monte Carlo: кликните Protect top 1/3/5 для подсветки на карте";
+          : "После War-Gaming: кликните Protect top 1/3/5 для подсветки на карте";
       } else {
         pel.innerHTML = [
           results.aggregate ? `avg damage: <b>${results.aggregate.avg_damage_score}</b>` : "",
           ...pareto.map(p => {
             const cls = paretoHighlightCount === p.protect_count ? "pareto-link selected" : "pareto-link";
-            return `<span class="${cls}" data-pareto="${p.protect_count}">Protect top ${p.protect_count}: <b>${p.damage_reduced_percent}%</b></span>`;
+            return `<span class="${cls}" data-pareto="${p.protect_count}">Protect top ${p.protect_count}: <b>${p.damage_reduced_percent}%</b> снижение ущерба</span>`;
           }),
         ].filter(Boolean).join("<br>");
         pel.querySelectorAll(".pareto-link").forEach(el => {
@@ -707,6 +789,7 @@
       lastFullData = baselineRawData || lastFullData;
       redrawFiltered(false);
       renderMonteCarloPanels(mcResults);
+      renderParetoChart(mcResults?.aggregate, mcResults?.pareto);
     }
 
     function focusOnNode(id) {
@@ -869,6 +952,8 @@
       document.getElementById("dc-n1-btn").disabled = false;
       document.getElementById("cascade-run-btn").disabled = cascadeActive || !cascadeInitialOutage;
       document.getElementById("mc-run-btn").disabled = mcRunning || !graphState;
+      const poolReady = !document.getElementById("generate-btn").disabled || !!graphState;
+      document.getElementById("demo-strike-btn").disabled = mcRunning || !poolReady;
       updateCascadeHint();
     }
 
@@ -1072,7 +1157,35 @@
           );
           renderMonteCarloPanels(mcResults);
         } catch (e) { showError(e.message); }
-        document.getElementById("mc-progress-text").textContent = `${mcResults.runs.length} runs · готово`;
+        document.getElementById("mc-progress-text").textContent = `${mcResults.runs.length} прогонов · готово`;
+      }
+    }
+
+    async function runDemoStrike() {
+      if (mcRunning) return;
+      const btn = document.getElementById("demo-strike-btn");
+      btn.disabled = true;
+      showError("");
+      try {
+        document.querySelectorAll(".preset-row button").forEach(x => x.classList.remove("active"));
+        document.querySelector('.preset-row button[data-n="100"]')?.classList.add("active");
+        document.getElementById("n_stations").value = 100;
+        document.getElementById("seed").value = 42;
+        document.getElementById("mc-runs").value = "100";
+        document.getElementById("mc-max-outages").value = "3";
+        if (!graphState) await generate();
+        if (!graphState) throw new Error("Не удалось построить сеть");
+        await runMonteCarlo();
+        if (mcCancel || !mcResults?.aggregate?.worst_scenarios?.length) return;
+        previewMcScenario(mcResults.aggregate.worst_scenarios[0].run_id);
+        highlightPareto(3);
+        const panel = document.getElementById("app-info-panel");
+        const target = document.getElementById("pareto-chart-wrap");
+        if (panel && target) panel.scrollTop = Math.max(0, target.offsetTop - 24);
+      } catch (e) { showError(e.message || String(e)); }
+      finally {
+        const poolReady = !document.getElementById("generate-btn").disabled || !!graphState;
+        btn.disabled = mcRunning || !poolReady;
       }
     }
 
@@ -1104,6 +1217,7 @@
     document.getElementById("mc-run-btn").addEventListener("click", runMonteCarlo);
     document.getElementById("mc-stop-btn").addEventListener("click", () => { mcCancel = true; });
     document.getElementById("mc-reset-btn").addEventListener("click", resetMonteCarlo);
+    document.getElementById("demo-strike-btn").addEventListener("click", runDemoStrike);
     document.getElementById("toggle-panels-btn").addEventListener("click", () => {
       document.body.classList.toggle("graph-only");
       setTimeout(() => map?.invalidateSize(), 120);
@@ -1126,6 +1240,10 @@
         solarPool = [];
       }
       document.getElementById("generate-btn").disabled = false;
+      document.getElementById("demo-strike-btn").disabled = false;
+      if (new URLSearchParams(location.search).get("demo") === "1") {
+        await runDemoStrike();
+      }
     })();
   </script>
 </body>
