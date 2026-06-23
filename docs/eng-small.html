@@ -59,7 +59,7 @@
       cursor: pointer;
     }
     button:hover { background: #1976D2; }
-    button:disabled { background: #aaa; cursor: wait; }
+    button:disabled { background: #aaa; cursor: not-allowed; }
     button.secondary {
       margin-top: 8px;
       background: #fff;
@@ -1411,8 +1411,19 @@
           renderMonteCarloPanels(mcResults);
           if (completed < mcOpts.runs) await yieldToUi();
         }
+      } catch (e) {
+        showError(e.message || "Ошибка Monte Carlo");
+      } finally {
+        mcRunning = false;
+        if (mcRunBtn) mcRunBtn.disabled = !graphState;
+        if (mcStopBtn) mcStopBtn.disabled = true;
+        if (mcResetBtn) mcResetBtn.disabled = !mcResults?.runs?.length;
+      }
 
-        if (!mcCancel && mcResults.runs.length) {
+      if (!mcCancel && mcResults?.runs?.length) {
+        if (mcProgressText) mcProgressText.textContent = "Pareto analysis…";
+        await yieldToUi();
+        try {
           mcResults.pareto = GraphCore.computeParetoRecommendations(
             stateWithDisables(),
             [...disabledSet],
@@ -1421,15 +1432,12 @@
             mcResults.aggregate
           );
           renderMonteCarloPanels(mcResults);
+        } catch (e) {
+          showError(e.message || "Ошибка Pareto");
         }
-      } catch (e) {
-        showError(e.message || "Ошибка Monte Carlo");
-      } finally {
-        mcRunning = false;
-        if (mcRunBtn) mcRunBtn.disabled = !graphState;
-        if (mcStopBtn) mcStopBtn.disabled = true;
-        if (mcResetBtn) mcResetBtn.disabled = !mcResults?.runs?.length;
-        if (mcCancel) updateMcProgress(completed, mcOpts.runs);
+        if (mcProgressText) {
+          mcProgressText.textContent = `${mcResults.runs.length} / ${mcOpts.runs} runs · готово`;
+        }
       }
     }
 

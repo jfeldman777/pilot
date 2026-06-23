@@ -165,6 +165,36 @@
     }
     .list small { display: block; font-size: 10px; margin-top: 4px; opacity: 0.8; }
     footer { margin-top: 20px; font-size: 11px; color: #888; text-align: center; max-width: 520px; line-height: 1.45; }
+    .demo-callout {
+      width: min(92vw, 640px);
+      margin-bottom: 16px;
+      padding: 12px 14px;
+      background: #fff8e1;
+      border: 1px solid #ffcc80;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #5d4037;
+    }
+    .demo-callout a { color: #1565c0; font-weight: 600; }
+    .demo-callout b { color: #e65100; }
+    .disclaimer-box {
+      width: min(92vw, 640px);
+      margin-bottom: 14px;
+      padding: 10px 12px;
+      background: #ffebee;
+      border: 1px solid #ef9a9a;
+      border-radius: 8px;
+      font-size: 11px;
+      line-height: 1.45;
+      color: #b71c1c;
+      text-align: center;
+    }
+    .list a.demo-primary {
+      border-color: #e65100;
+      background: #fff3e0;
+      box-shadow: 0 0 0 1px rgba(230, 81, 0, 0.15);
+    }
   </style>
 </head>
 <body>
@@ -177,6 +207,14 @@
     <span>X — Малый ↔ Большой</span>
     <span>Y — Схема ↔ Карта</span>
     <span>Z — Screening ↔ Инженерная</span>
+  </div>
+
+  <div class="disclaimer-box">
+    <b>Demonstration MVP.</b> Synthetic/open-derived data. Not an operational grid model. Not an engineering recommendation.
+  </div>
+
+  <div class="demo-callout">
+    <b>Demo path (3–5 мин):</b> откройте <a href="eng-map.html">режим 6 — инженерная карта</a> → Построить → DC flow → Monte Carlo → worst scenario → Pareto. Подробнее: <code>README.md</code>.
   </div>
 
   <div class="scene-wrap">
@@ -256,14 +294,15 @@
     <a href="large.html">3. Большой · Схема · Screening<small>large.html — 100–1000 узлов</small></a>
     <a href="large-map.html">4. Большой · Карта · Screening<small>large-map.html — кластеры, паспорт данных</small></a>
     <a href="eng-small.html">5. Малый · Схема · Инженерная<small>DC power flow · eng-small.html</small></a>
-    <a href="eng-map.html">6. Малый · Карта · Инженерная<small>eng-map.html — DC power flow на карте</small></a>
+    <a href="eng-map.html" class="demo-primary">6. Малый · Карта · Инженерная<small>★ главный demo · DC · Monte Carlo · Pareto</small></a>
     <div class="item-off">7. Большой · Схема · Инженерная<small>скоро</small></div>
     <div class="item-off">8. Большой · Карта · Инженерная<small>скоро</small></div>
   </div>
 
   <footer>
     Screening = математическая модель, synthetic links/capacity.<br>
-    Не является инженерной оценкой режима энергосистемы.
+    Инженерные режимы 5–6: synthetic electrical parameters, screening metrics only.<br>
+    Не является операционной моделью энергосистемы.
   </footer>
 </body>
 </html>
