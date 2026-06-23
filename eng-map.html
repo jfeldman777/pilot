@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DC power flow — карта</title>
+  <link rel="stylesheet" href="home-nav.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body { font-family: "Segoe UI", Arial, sans-serif; height: 100vh; display: flex; background: #f0f2f5; color: #222; overflow: hidden; }
+
+    .sidebar {
+      width: 300px; min-width: 300px; background: #fff; border-right: 1px solid #ddd;
+      display: flex; flex-direction: column; overflow-y: auto; z-index: 1000;
+    }
+    .sidebar h1 { font-size: 17px; padding: 14px 16px 6px; }
+    .sidebar p { font-size: 12px; color: #666; padding: 0 16px 10px; line-height: 1.4; }
+    form { flex: 1; }
+    .field { margin-bottom: 12px; }
+    .field label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: #444; }
+    .field input, .field select {
+      width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px;
+    }
+    .hint-box {
+      font-size: 11px; color: #555; background: #f7f7f7; border-radius: 6px;
+      padding: 8px 10px; margin-bottom: 12px; line-height: 1.45;
+    }
+    .hint-box.active { background: #fff3e0; color: #e65100; border: 1px solid #ffcc80; }
+    .metrics-box {
+      font-size: 11px; line-height: 1.55; background: #e8eaf6; border: 1px solid #9fa8da;
+      border-radius: 6px; padding: 8px 10px; margin-bottom: 12px; color: #283593;
+    }
+    .metrics-box b { display: block; margin-bottom: 4px; font-size: 12px; }
+    button {
+      width: 100%; padding: 10px; background: #5c6bc0; color: #fff; border: none;
+      border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer;
+    }
+    button:hover { background: #3f51b5; }
+    button:disabled { background: #aaa; cursor: wait; }
+    button.secondary { margin-top: 8px; background: #fff; color: #3f51b5; border: 1px solid #5c6bc0; }
+    button.secondary:hover { background: #e8eaf6; }
+    .error { margin: 0 16px 12px; padding: 10px; background: #ffebee; color: #c62828; border-radius: 6px; font-size: 13px; display: none; }
+    .sidebar-panel { padding: 0 16px 16px; }
+
+    .main { flex: 1; position: relative; min-width: 0; min-height: 0; }
+    #leaflet-map { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; background: #dde4ea; }
+
+    .panel-toggle {
+      position: absolute; top: 12px; right: 12px; z-index: 1000;
+      padding: 8px 12px; border: 1px solid #ccc; border-radius: 6px;
+      background: rgba(255,255,255,0.95); font-size: 12px; font-weight: 600; cursor: pointer;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+    }
+
+    .map-legend {
+      position: absolute; bottom: 16px; left: 16px; z-index: 1000;
+      background: rgba(255,255,255,0.95); padding: 10px 12px; border-radius: 8px;
+      border: 1px solid #ddd; font-size: 11px; display: flex; flex-direction: column; gap: 6px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1); pointer-events: none;
+    }
+    .legend-row { display: flex; align-items: center; gap: 8px; }
+    .dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #333; flex-shrink: 0; }
+    .line-swatch { width: 28px; height: 4px; border-radius: 2px; flex-shrink: 0; }
+
+    .info-panel {
+      width: 300px; min-width: 300px; background: #fff; border-left: 1px solid #ddd;
+      overflow-y: auto; z-index: 1000; padding: 14px 16px;
+    }
+    .info-panel h2 { font-size: 15px; margin-bottom: 12px; }
+    .panel-section { margin-bottom: 16px; }
+    .panel-section h3 { font-size: 12px; color: #555; margin-bottom: 6px; }
+    .detail-card {
+      font-size: 12px; line-height: 1.55; background: #f5f5f5; border-radius: 6px;
+      padding: 10px 12px; border: 1px solid #e0e0e0;
+    }
+    .detail-card.empty { color: #999; font-style: italic; background: #fafafa; }
+    .detail-card dt { font-weight: 600; color: #444; margin-top: 6px; }
+    .detail-card dt:first-child { margin-top: 0; }
+    .detail-card dd { margin: 0 0 0 8px; color: #333; }
+    .panel-list { list-style: none; font-size: 12px; max-height: 180px; overflow-y: auto; }
+    .panel-list li { padding: 6px 0; border-bottom: 1px solid #eee; line-height: 1.4; cursor: default; }
+    .panel-list li.clickable { cursor: pointer; }
+    .panel-list li.clickable:hover { background: #e8eaf6; margin: 0 -8px; padding: 6px 8px; border-radius: 4px; }
+    .n1-rank { font-weight: 700; color: #3f51b5; margin-right: 4px; }
+
+    body.graph-only .sidebar, body.graph-only .info-panel { display: none !important; }
+
+    .flow-label-icon {
+      background: rgba(255,255,255,0.92); border: 1px solid #bbb; border-radius: 4px;
+      padding: 1px 4px; font-size: 10px; font-weight: 600; color: #333; white-space: nowrap;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+    }
+    .flow-label-icon.zero { color: #999; border-style: dashed; }
+
+    .node-marker {
+      width: 26px; height: 26px; border-radius: 50%; border: 2px solid #222;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: bold; color: #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+    }
+    .node-marker.slack { border: 3px solid #5c6bc0; box-shadow: 0 0 0 2px rgba(92,107,192,0.35); }
+    .node-marker.selected { box-shadow: 0 0 0 3px #ff9800; }
+
+    .node-cluster { position: relative; width: 76px; height: 76px; }
+    .node-cluster .cluster-item {
+      position: absolute; width: 24px; height: 24px; border-radius: 50%; border: 2px solid #222;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: bold; color: #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3); cursor: pointer;
+      transition: transform 0.12s;
+    }
+    .node-cluster .cluster-item:hover { transform: scale(1.14); z-index: 30 !important; }
+    .node-cluster .cluster-item.slack { border: 3px solid #5c6bc0; }
+    .node-cluster .cluster-item.selected { box-shadow: 0 0 0 2px #ff9800; }
+    .node-cluster .cluster-badge {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      width: 10px; height: 10px; border-radius: 50%;
+      background: rgba(255,255,255,0.85); border: 1px solid #888;
+      pointer-events: none; z-index: 1;
+    }
+  </style>
+</head>
+<body>
+  <a href="home.html" class="home-btn" title="Домой">⌂</a>
+  <aside class="sidebar" id="app-sidebar">
+    <h1>DC power flow · карта</h1>
+    <p id="sidebar-desc">Режим 6 из 8 · Инженерная · малый · гео</p>
+    <div class="banner" style="margin:0 16px 10px;padding:8px 10px;background:#e8eaf6;border:1px solid #9fa8da;border-radius:6px;font-size:10px;line-height:1.4;color:#283593">
+      Engineering preview: DC power flow screening. Synthetic parameters. Not an operational grid model.
+    </div>
+    <div class="sidebar-panel">
+      <form id="params-form">
+        <div class="field">
+          <label for="n_stations">Узлов на карте</label>
+          <input type="number" id="n_stations" value="30" min="20" max="50" step="1">
+        </div>
+        <div class="field">
+          <label for="flow_mode">Расчёт потоков</label>
+          <select id="flow_mode">
+            <option value="math">Математический flow</option>
+            <option value="dc" selected>DC power flow</option>
+            <option value="compare">Сравнение</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="seed">Seed</label>
+          <input type="number" id="seed" value="42">
+        </div>
+        <div class="hint-box" id="pool-hint">Загрузка реестра СЕС…</div>
+        <div class="metrics-box" id="metrics-box">
+          <b>Метрики DC</b>
+          <span id="metrics-text">Постройте сеть на карте</span>
+        </div>
+        <button type="submit" id="generate-btn" disabled>Построить на карте</button>
+        <button type="button" id="dc-n1-btn" class="secondary" disabled>DC N-1 на карте</button>
+        <button type="button" id="worst-n1-btn" class="secondary" disabled>Показать худший сценарий</button>
+        <div class="hint-box" id="n1-hint">N-1: поочерёдное отключение линий и пересчёт DC</div>
+      </form>
+      <div class="error" id="error"></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div id="leaflet-map"></div>
+    <button type="button" id="toggle-panels-btn" class="panel-toggle" title="Скрыть панели">⛶ Карта</button>
+    <div class="map-legend">
+      <div class="legend-row"><span class="dot" style="background:#4CAF50"></span> Генератор</div>
+      <div class="legend-row"><span class="dot" style="background:#F44336"></span> Потребитель</div>
+      <div class="legend-row"><span class="dot" style="background:#2196F3"></span> Транзит</div>
+      <div class="legend-row"><span class="dot slack" style="background:#fff;border:3px solid #5c6bc0"></span> Slack</div>
+      <div class="legend-row"><span class="line-swatch" style="background:#555"></span> Загрузка 0–70%</div>
+      <div class="legend-row"><span class="line-swatch" style="background:#FF9800"></span> 70–100%</div>
+      <div class="legend-row"><span class="line-swatch" style="background:#c62828"></span> &gt;100% violation</div>
+      <div class="legend-row"><span class="line-swatch" style="background:#e65100;height:5px"></span> N-1 outage</div>
+    </div>
+  </main>
+
+  <aside class="info-panel" id="app-info-panel">
+    <h2>Детали</h2>
+    <div class="panel-section">
+      <h3>Выбранный объект</h3>
+      <dl class="detail-card empty" id="detail-card">Кликните узел или линию на карте</dl>
+    </div>
+    <div class="panel-section">
+      <h3>DC N-1 · топ-5</h3>
+      <ul class="panel-list" id="n1-list"><li>Запустите «DC N-1 на карте»</li></ul>
+    </div>
+    <div class="panel-section" id="scenario-section" style="display:none">
+      <h3>Худший сценарий</h3>
+      <div class="detail-card" id="scenario-card"></div>
+    </div>
+  </aside>
+
+  <script src="graph_core.js?v=11"></script>
+  <script>
+    const ROLE_COLORS = { generator: "#4CAF50", consumer: "#F44336", transit: "#2196F3" };
+    const ROLE_NAMES = { generator: "генератор", consumer: "потребитель", transit: "транзит" };
+    const ASSET_NAMES = { generator: "generation", consumer: "load", transit: "transit" };
+
+    let leafletMap = null;
+    let markersLayer = null;
+    let edgesLayer = null;
+    let labelsLayer = null;
+    let markerById = new Map();
+    let clusterMarkers = new Map();
+    let graphState = null;
+    let solarPool = [];
+    let rebalancing = false;
+    let lastData = null;
+    let selectedNodeId = null;
+    let selectedEdgeId = null;
+    let n1Scenarios = null;
+    let n1Worst = null;
+    let showingWorst = false;
+
+    const errorEl = document.getElementById("error");
+    const poolHint = document.getElementById("pool-hint");
+    const metricsText = document.getElementById("metrics-text");
+    const generateBtn = document.getElementById("generate-btn");
+    const dcN1Btn = document.getElementById("dc-n1-btn");
+    const worstN1Btn = document.getElementById("worst-n1-btn");
+    const n1Hint = document.getElementById("n1-hint");
+    const n1List = document.getElementById("n1-list");
+    const detailCard = document.getElementById("detail-card");
+    const scenarioSection = document.getElementById("scenario-section");
+    const scenarioCard = document.getElementById("scenario-card");
+    const flowModeEl = document.getElementById("flow_mode");
+    const togglePanelsBtn = document.getElementById("toggle-panels-btn");
+    const form = document.getElementById("params-form");
+
+    function nodeId(raw) {
+      return typeof raw === "string" ? parseInt(raw, 10) : raw;
+    }
+
+    function showError(msg) {
+      errorEl.textContent = msg || "";
+      errorEl.style.display = msg ? "block" : "none";
+    }
+
+    function getEngOpts() {
+      return { flowMode: flowModeEl ? flowModeEl.value : "dc" };
+    }
+
+    function dcLoadingColor(percent, edge) {
+      if (edge?.n1_outage) return "#e65100";
+      if (edge?.dc_violation || percent > 100) return "#c62828";
+      if (percent >= 70) return "#FF9800";
+      return "#555555";
+    }
+
+    function shouldShowLabels() {
+      if (!leafletMap || !lastData) return false;
+      const n = lastData.edges?.length || 0;
+      return leafletMap.getZoom() >= 8 || n <= 30;
+    }
+
+    function renderMetrics(data) {
+      const m = data.engineering_metrics || {};
+      const dc = data.dc || {};
+      const slack = m.slack_label != null ? `${m.slack_label} (#${m.slack_node})` : "—";
+      metricsText.innerHTML = [
+        `DC solved: <b>${m.dc_solved || dc.solved ? "yes" : "no"}</b>`,
+        `Slack node: <b>${slack}</b>`,
+        `Max loading: <b>${m.max_loading_percent ?? dc.feasibility?.max_loading_percent ?? "—"}%</b>`,
+        `Capacity violations: <b>${m.capacity_violations ?? dc.feasibility?.capacity_violations_count ?? 0}</b>`,
+        `Total generation: <b>${m.total_generation ?? "—"} MW</b>`,
+        `Total load: <b>${m.total_load ?? "—"} MW</b>`,
+      ].join("<br>");
+    }
+
+    function renderNodeDetail(node) {
+      selectedNodeId = nodeId(node.id);
+      selectedEdgeId = null;
+      detailCard.className = "detail-card";
+      const type = node.asset_type || ASSET_NAMES[node.role] || node.role;
+      const genLoad = node.role === "generator"
+        ? `generation: ${node.generation_mw ?? 0} MW`
+        : node.role === "consumer"
+          ? `load: ${node.load_mw ?? 0} MW`
+          : "—";
+      detailCard.innerHTML = `
+        <dt>Узел</dt><dd>${node.letter || node.id} (#${node.id})</dd>
+        <dt>Тип</dt><dd>${type}</dd>
+        <dt>Generation / load</dt><dd>${genLoad}</dd>
+        <dt>θ (theta)</dt><dd>${node.theta != null ? node.theta : "—"}</dd>
+        <dt>voltage_level_kv</dt><dd>${node.voltage_level_kv != null ? node.voltage_level_kv + " kV" : "—"}</dd>
+        <dt>slack</dt><dd>${node.is_slack ? "yes" : "no"}</dd>
+        ${node.station_name ? `<dt>Станция</dt><dd>${node.station_name}</dd>` : ""}
+      `;
+      refreshMarkerStyles();
+    }
+
+    function renderEdgeDetail(edge) {
+      selectedEdgeId = edge.id;
+      selectedNodeId = null;
+      detailCard.className = "detail-card";
+      const loading = edge.dc_loading_percent ?? edge.loading_percent ?? 0;
+      const violation = edge.dc_violation || edge.capacity_violation;
+      detailCard.innerHTML = `
+        <dt>Линия</dt><dd>${edge.label || edge.id}</dd>
+        <dt>from → to</dt><dd>#${edge.from} → #${edge.to}</dd>
+        <dt>reactance</dt><dd>${edge.reactance ?? "—"}</dd>
+        <dt>capacity_mw</dt><dd>${edge.capacity_mw ?? "—"}</dd>
+        <dt>dc_flow_mw</dt><dd>${edge.dc_flow_mw != null ? Math.round(edge.dc_flow_mw * 10) / 10 : "—"}</dd>
+        <dt>dc_loading_percent</dt><dd>${loading}%</dd>
+        <dt>violation</dt><dd>${violation ? "yes" : "no"}</dd>
+      `;
+      refreshMarkerStyles();
+    }
+
+    function clearDetail() {
+      selectedNodeId = null;
+      selectedEdgeId = null;
+      detailCard.className = "detail-card empty";
+      detailCard.textContent = "Кликните узел или линию на карте";
+      refreshMarkerStyles();
+    }
+
+    function renderN1List(scenarios) {
+      if (!scenarios?.length) {
+        n1List.innerHTML = "<li>Нет сценариев</li>";
+        return;
+      }
+      n1List.innerHTML = scenarios.slice(0, 5).map((s, i) =>
+        `<li class="clickable" data-edge-key="${s.edgeKey}"><span class="n1-rank">#${i + 1}</span>${s.label}<br><small>violations ${s.dc_capacity_violations} · loading ${s.dc_max_loading_percent}%</small></li>`
+      ).join("");
+      n1List.querySelectorAll("li.clickable").forEach(li => {
+        li.addEventListener("click", () => {
+          const ek = li.dataset.edgeKey;
+          const sc = scenarios.find(s => s.edgeKey === ek);
+          if (sc) previewScenario(sc);
+        });
+      });
+    }
+
+    function previewScenario(sc) {
+      n1Worst = sc;
+      worstN1Btn.disabled = false;
+      n1Hint.textContent = `Выбран: ${sc.label} · loading ${sc.dc_max_loading_percent}%`;
+      n1Hint.className = "hint-box active";
+    }
+
+    function initMap() {
+      if (leafletMap) return;
+      leafletMap = L.map("leaflet-map", { zoomControl: true }).setView([48.5, 31.2], 6);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+        maxZoom: 18,
+      }).addTo(leafletMap);
+      markersLayer = L.layerGroup().addTo(leafletMap);
+      edgesLayer = L.layerGroup().addTo(leafletMap);
+      labelsLayer = L.layerGroup().addTo(leafletMap);
+      leafletMap.on("zoomend", () => { if (lastData) drawGraph(lastData, false); });
+      setTimeout(() => leafletMap.invalidateSize(), 100);
+    }
+
+    function markerHtml(node) {
+      const letter = node.letter || String(node.id);
+      let bg = ROLE_COLORS[node.role] || "#888";
+      let cls = "node-marker";
+      if (node.is_slack) cls += " slack";
+      if (selectedNodeId === nodeId(node.id)) cls += " selected";
+      return `<div class="${cls}" style="background:${bg}">${letter}</div>`;
+    }
+
+    function coordKey(lat, lng) {
+      return `${lat.toFixed(5)},${lng.toFixed(5)}`;
+    }
+
+    function groupNodesByLocation(nodes) {
+      const groups = new Map();
+      for (const node of nodes) {
+        const key = coordKey(node.lat, node.lng);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(node);
+      }
+      return groups;
+    }
+
+    function displayLatLng(node) {
+      const id = nodeId(node.id);
+      for (const { marker, nodeIds } of clusterMarkers.values()) {
+        if (nodeIds.includes(id)) return marker.getLatLng();
+      }
+      const m = markerById.get(id);
+      if (m) return m.getLatLng();
+      return L.latLng(node.lat, node.lng);
+    }
+
+    function makeClusterIcon(nodes) {
+      const size = 76;
+      const cx = size / 2;
+      const cy = size / 2;
+      const ringR = 20;
+      const itemR = 12;
+      const n = nodes.length;
+      const sorted = [...nodes].sort((a, b) => nodeId(a.id) - nodeId(b.id));
+      const htmlParts = sorted.map((node, i) => {
+        const angle = (2 * Math.PI * i) / n - Math.PI / 2;
+        const x = cx + ringR * Math.cos(angle) - itemR;
+        const y = cy + ringR * Math.sin(angle) - itemR;
+        const z = 10 + i;
+        const letter = node.letter || String(node.id);
+        let bg = ROLE_COLORS[node.role] || "#888";
+        let cls = "cluster-item";
+        if (node.is_slack) cls += " slack";
+        if (selectedNodeId === nodeId(node.id)) cls += " selected";
+        const tip = `${letter} · ${ROLE_NAMES[node.role] || node.role}`.replace(/"/g, "&quot;");
+        return `<div class="${cls}" data-node-id="${nodeId(node.id)}" style="left:${x}px;top:${y}px;background:${bg};z-index:${z}" title="${tip}">${letter}</div>`;
+      });
+      return L.divIcon({
+        className: "",
+        html: `<div class="node-cluster">${n > 2 ? '<div class="cluster-badge"></div>' : ""}${htmlParts.join("")}</div>`,
+        iconSize: [size, size],
+        iconAnchor: [cx, cy],
+      });
+    }
+
+    function attachClusterClickHandlers(marker) {
+      marker.on("add", function () {
+        const el = this.getElement();
+        if (!el || el._clusterClick) return;
+        el._clusterClick = true;
+        L.DomEvent.on(el, "click", e => {
+          const item = e.target.closest?.(".cluster-item");
+          if (!item) return;
+          L.DomEvent.stopPropagation(e);
+          if (rebalancing) return;
+          const id = nodeId(item.dataset.nodeId);
+          const node = lastData?.nodes.find(n => nodeId(n.id) === id);
+          if (node) renderNodeDetail(node);
+        });
+      });
+    }
+
+    function clusterTooltip(nodes) {
+      return nodes.map(n => {
+        const letter = n.letter || String(n.id);
+        const slack = n.is_slack ? " · SLACK" : "";
+        return `<b>${letter}</b> ${ROLE_NAMES[n.role] || n.role}${slack}`;
+      }).join("<br>");
+    }
+
+    function makeNodeIcon(node) {
+      return L.divIcon({
+        className: "",
+        html: markerHtml(node),
+        iconSize: [26, 26],
+        iconAnchor: [13, 13],
+      });
+    }
+
+    function refreshMarkerStyles() {
+      if (!lastData) return;
+      const nodeMap = new Map(lastData.nodes.map(n => [nodeId(n.id), n]));
+      for (const n of lastData.nodes) {
+        const m = markerById.get(nodeId(n.id));
+        if (m) m.setIcon(makeNodeIcon(n));
+      }
+      for (const { marker, nodeIds } of clusterMarkers.values()) {
+        const nodes = nodeIds.map(id => nodeMap.get(id)).filter(Boolean);
+        if (nodes.length) marker.setIcon(makeClusterIcon(nodes));
+      }
+    }
+
+    function drawGraph(data, fitBounds) {
+      lastData = data;
+      markersLayer.clearLayers();
+      edgesLayer.clearLayers();
+      labelsLayer.clearLayers();
+      markerById.clear();
+      clusterMarkers.clear();
+
+      const nodeMap = new Map(data.nodes.map(n => [nodeId(n.id), n]));
+      const showLabels = shouldShowLabels();
+      const groups = groupNodesByLocation(data.nodes);
+
+      for (const [key, nodes] of groups) {
+        if (nodes.length === 1) {
+          const node = nodes[0];
+          const id = nodeId(node.id);
+          const m = L.marker([node.lat, node.lng], {
+            icon: makeNodeIcon(node),
+            draggable: true,
+            riseOnHover: true,
+          });
+          m.bindTooltip(`${node.letter || id} · ${ROLE_NAMES[node.role] || node.role}${node.is_slack ? " · SLACK" : ""}`, { direction: "top", offset: [0, -10] });
+          m.on("click", () => renderNodeDetail(node));
+          m.on("dragend", () => rebalance());
+          markersLayer.addLayer(m);
+          markerById.set(id, m);
+        } else {
+          const nodeIds = nodes.map(n => nodeId(n.id));
+          const m = L.marker([nodes[0].lat, nodes[0].lng], {
+            icon: makeClusterIcon(nodes),
+            draggable: true,
+            riseOnHover: true,
+          });
+          m.bindTooltip(clusterTooltip(nodes), { direction: "top", offset: [0, -14] });
+          attachClusterClickHandlers(m);
+          m.on("dragend", () => rebalance());
+          markersLayer.addLayer(m);
+          clusterMarkers.set(key, { marker: m, nodeIds });
+        }
+      }
+
+      for (const e of data.edges) {
+        const from = nodeMap.get(nodeId(e.from));
+        const to = nodeMap.get(nodeId(e.to));
+        if (!from || !to) continue;
+        const fromLl = displayLatLng(from);
+        const toLl = displayLatLng(to);
+        const loading = e.dc_loading_percent ?? e.loading_percent ?? 0;
+        const isSelected = selectedEdgeId === e.id;
+        const n1Out = e.n1_outage;
+        const color = dcLoadingColor(loading, e);
+        const line = L.polyline(
+          [[fromLl.lat, fromLl.lng], [toLl.lat, toLl.lng]],
+          {
+            color,
+            weight: n1Out ? 6 : isSelected ? 5 : e.dc_violation ? 4 : 3,
+            opacity: n1Out ? 0.95 : 0.8,
+            dashArray: n1Out ? "10 6" : null,
+          }
+        );
+        const hitLine = L.polyline(
+          [[fromLl.lat, fromLl.lng], [toLl.lat, toLl.lng]],
+          { color: "#000", weight: 16, opacity: 0 }
+        );
+        hitLine.on("click", () => renderEdgeDetail(e));
+        edgesLayer.addLayer(line);
+        edgesLayer.addLayer(hitLine);
+
+        if (showLabels && e.label) {
+          const midLat = (fromLl.lat + toLl.lat) / 2;
+          const midLng = (fromLl.lng + toLl.lng) / 2;
+          const zero = !e.label || String(e.label).includes(" 0");
+          labelsLayer.addLayer(L.marker([midLat, midLng], {
+            icon: L.divIcon({
+              className: "",
+              html: `<div class="flow-label-icon${zero ? " zero" : ""}">${e.label}</div>`,
+              iconSize: [0, 0],
+            }),
+            interactive: false,
+          }));
+        }
+      }
+
+      if (fitBounds && data.nodes.length) {
+        const bounds = L.latLngBounds(data.nodes.map(n => [n.lat, n.lng]));
+        leafletMap.fitBounds(bounds.pad(0.12));
+      }
+    }
+
+    function getPositions() {
+      const out = {};
+      for (const [id, m] of markerById) {
+        const ll = m.getLatLng();
+        out[id] = { lat: ll.lat, lng: ll.lng };
+      }
+      for (const { marker, nodeIds } of clusterMarkers.values()) {
+        const ll = marker.getLatLng();
+        for (const id of nodeIds) out[id] = { lat: ll.lat, lng: ll.lng };
+      }
+      return out;
+    }
+
+    function applyResult(data, fitBounds) {
+      graphState = data.state;
+      renderMetrics(data);
+      if (data.dc_n1) {
+        n1Scenarios = data.dc_n1.scenarios;
+        n1Worst = data.dc_n1.worst;
+        renderN1List(n1Scenarios);
+      }
+      if (data.dc_n1_summary) {
+        n1Hint.textContent = data.dc_n1_summary;
+        n1Hint.className = "hint-box active";
+      }
+      if (showingWorst && n1Worst) {
+        scenarioSection.style.display = "block";
+        scenarioCard.innerHTML = `
+          <dt>Отключена линия</dt><dd>${n1Worst.label}</dd>
+          <dt>DC violations</dt><dd>${n1Worst.dc_capacity_violations}</dd>
+          <dt>Max loading</dt><dd>${n1Worst.dc_max_loading_percent}%</dd>
+          <dt>Critical unserved</dt><dd>${n1Worst.critical_unserved_count}</dd>
+        `;
+      }
+      drawGraph(data, fitBounds);
+      dcN1Btn.disabled = false;
+      worstN1Btn.disabled = !n1Worst;
+    }
+
+    async function rebalance() {
+      if (!graphState || rebalancing) return;
+      rebalancing = true;
+      showError("");
+      try {
+        const data = GraphCore.rebalanceEngineering(graphState, [], getPositions(), getEngOpts());
+        applyResult(data, false);
+      } catch (e) {
+        showError(e.message || "Ошибка перебалансировки");
+      } finally {
+        rebalancing = false;
+      }
+    }
+
+    function generate() {
+      showError("");
+      const count = +document.getElementById("n_stations").value;
+      const seed = +document.getElementById("seed").value;
+      generateBtn.disabled = true;
+      generateBtn.textContent = "Построение…";
+      showingWorst = false;
+      n1Scenarios = null;
+      n1Worst = null;
+      scenarioSection.style.display = "none";
+      n1List.innerHTML = "<li>Запустите «DC N-1 на карте»</li>";
+      n1Hint.textContent = "N-1: поочерёдное отключение линий и пересчёт DC";
+      n1Hint.className = "hint-box";
+      clearDetail();
+      try {
+        const data = GraphCore.generateEngineeringGeo(solarPool, { count, seed, ...getEngOpts() });
+        applyResult(data, true);
+      } catch (e) {
+        showError(e.message || "Не удалось построить");
+      } finally {
+        generateBtn.disabled = false;
+        generateBtn.textContent = "Построить на карте";
+      }
+    }
+
+    async function runDcN1() {
+      if (!graphState) return;
+      showError("");
+      dcN1Btn.disabled = true;
+      dcN1Btn.textContent = "N-1…";
+      showingWorst = false;
+      scenarioSection.style.display = "none";
+      try {
+        const { scenarios, worst } = GraphCore.scanDcN1Scenarios(graphState, []);
+        n1Scenarios = scenarios;
+        n1Worst = worst;
+        renderN1List(scenarios);
+        if (worst) {
+          n1Hint.textContent = `Худшее N-1: ${worst.label} · violations ${worst.dc_capacity_violations} · loading ${worst.dc_max_loading_percent}%`;
+          n1Hint.className = "hint-box active";
+        }
+        worstN1Btn.disabled = !worst;
+        const data = GraphCore.rebalanceEngineering(graphState, [], getPositions(), getEngOpts());
+        data.dc_n1 = { scenarios: scenarios.slice(0, 15), worst };
+        applyResult(data, false);
+      } catch (e) {
+        showError(e.message || "Ошибка N-1");
+      } finally {
+        dcN1Btn.disabled = false;
+        dcN1Btn.textContent = "DC N-1 на карте";
+      }
+    }
+
+    async function showWorstScenario() {
+      if (!graphState || !n1Worst) return;
+      showError("");
+      worstN1Btn.disabled = true;
+      worstN1Btn.textContent = "Показ…";
+      showingWorst = true;
+      try {
+        const data = GraphCore.applyDcN1Scenario(
+          graphState,
+          n1Worst.edgeKey,
+          [],
+          getPositions(),
+          getEngOpts()
+        );
+        data.dc_n1 = { scenarios: (n1Scenarios || []).slice(0, 15), worst: n1Worst };
+        data.dc_n1_summary = `Сценарий: ${n1Worst.label} отключена`;
+        applyResult(data, false);
+        const outageEdge = data.edges.find(e => e.n1_outage);
+        if (outageEdge) renderEdgeDetail(outageEdge);
+      } catch (e) {
+        showError(e.message || "Ошибка сценария");
+      } finally {
+        worstN1Btn.disabled = false;
+        worstN1Btn.textContent = "Показать худший сценарий";
+      }
+    }
+
+    function setGraphOnlyMode(on) {
+      document.body.classList.toggle("graph-only", on);
+      togglePanelsBtn.textContent = on ? "⊞ Панели" : "⛶ Карта";
+      setTimeout(() => { if (leafletMap) leafletMap.invalidateSize(); }, 120);
+    }
+
+    function filterSolar(stations) {
+      return stations.filter(s => s.type === "solar" && s.lat != null && s.lon != null);
+    }
+
+    async function loadSolarSample() {
+      const r = await fetch("data/solar_sample.json");
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }
+
+    function loadRemoteRegistry() {
+      return new Promise((resolve, reject) => {
+        if (typeof ALL_STATIONS !== "undefined") {
+          resolve(filterSolar(ALL_STATIONS));
+          return;
+        }
+        const s = document.createElement("script");
+        s.src = "https://vde-map.vercel.app/all_stations.js";
+        const timer = setTimeout(() => { s.remove(); reject(new Error("Таймаут")); }, 15000);
+        s.onload = () => {
+          clearTimeout(timer);
+          if (typeof ALL_STATIONS === "undefined") reject(new Error("ALL_STATIONS не найден"));
+          else resolve(filterSolar(ALL_STATIONS));
+        };
+        s.onerror = () => { clearTimeout(timer); reject(new Error("vde-map недоступен")); };
+        document.head.appendChild(s);
+      });
+    }
+
+    async function loadSolarPool() {
+      try { return await loadRemoteRegistry(); }
+      catch (_) { return loadSolarSample(); }
+    }
+
+    form.addEventListener("submit", e => { e.preventDefault(); generate(); });
+    dcN1Btn.addEventListener("click", runDcN1);
+    worstN1Btn.addEventListener("click", showWorstScenario);
+    togglePanelsBtn.addEventListener("click", () => setGraphOnlyMode(!document.body.classList.contains("graph-only")));
+    if (flowModeEl) flowModeEl.addEventListener("change", () => graphState && rebalance());
+
+    (async () => {
+      initMap();
+      if (typeof GraphCore === "undefined") {
+        showError("graph_core.js не загружен");
+        return;
+      }
+      try {
+        solarPool = GraphCore.normalizeSolarPool(await loadSolarPool());
+        poolHint.textContent = `Пул СЕС: ${solarPool.length} станций · координаты OPEN_DATA / SYNTHETIC_DERIVED`;
+        generateBtn.disabled = false;
+      } catch (e) {
+        poolHint.textContent = "Реестр недоступен — будет SYNTHETIC_FALLBACK";
+        solarPool = [];
+        generateBtn.disabled = false;
+      }
+    })();
+  </script>
+</body>
+</html>

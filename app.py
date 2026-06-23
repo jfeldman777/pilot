@@ -46,6 +46,11 @@ def eng_small_page():
     return send_from_directory(ROOT, "eng-small.html")
 
 
+@app.get("/eng-map.html")
+def eng_map_page():
+    return send_from_directory(ROOT, "eng-map.html")
+
+
 @app.get("/<path:path>")
 def static_files(path):
     return send_from_directory(ROOT, path)

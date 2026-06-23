@@ -829,6 +829,97 @@
     return pos;
   }
 
+  function spreadVisNodes(nodes, opts = {}) {
+    const scale = opts.scale ?? 1.28;
+    const minGap = opts.minGap ?? 14;
+    const passes = opts.passes ?? 40;
+    if (!nodes.length) return;
+    let cx = 0;
+    let cy = 0;
+    for (const n of nodes) {
+      cx += n.x;
+      cy += n.y;
+    }
+    cx /= nodes.length;
+    cy /= nodes.length;
+    for (const n of nodes) {
+      n.x = cx + (n.x - cx) * scale;
+      n.y = cy + (n.y - cy) * scale;
+    }
+    const list = nodes.map(n => ({ n, x: n.x, y: n.y, r: (n.size || 38) / 2 }));
+    for (let pass = 0; pass < passes; pass++) {
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          const a = list[i];
+          const b = list[j];
+          const need = a.r + b.r + minGap;
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const dist = Math.hypot(dx, dy) || 0.01;
+          if (dist < need) {
+            const push = (need - dist) / 2;
+            const ux = dx / dist;
+            const uy = dy / dist;
+            a.x -= ux * push;
+            a.y -= uy * push;
+            b.x += ux * push;
+            b.y += uy * push;
+          }
+        }
+      }
+    }
+    for (const item of list) {
+      item.n.x = item.x;
+      item.n.y = item.y;
+    }
+  }
+
+  function spreadGeoNodeDisplays(nodes, seed, minSepDeg) {
+    if (!nodes.length) return;
+    const n = nodes.length;
+    minSepDeg = minSepDeg ?? Math.max(0.06, 0.14 - n * 0.002);
+    const parent = nodes.map((_, i) => i);
+    const find = i => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+    const union = (a, b) => { parent[find(a)] = find(b); };
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const dx = nodes[i].lat - nodes[j].lat;
+        const dy = nodes[i].lng - nodes[j].lng;
+        if (Math.hypot(dx, dy) < minSepDeg) union(i, j);
+      }
+    }
+    const groups = new Map();
+    nodes.forEach((node, i) => {
+      const g = find(i);
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(node);
+    });
+    for (const group of groups.values()) {
+      if (group.length === 1) {
+        group[0].geo_lat = group[0].lat;
+        group[0].geo_lng = group[0].lng;
+        continue;
+      }
+      let clat = 0;
+      let clng = 0;
+      for (const node of group) {
+        clat += node.lat;
+        clng += node.lng;
+      }
+      clat /= group.length;
+      clng /= group.length;
+      const ringR = Math.min(0.2, 0.028 + group.length * 0.016);
+      const sorted = [...group].sort((a, b) => a.id - b.id);
+      sorted.forEach((node, i) => {
+        const angle = (2 * Math.PI * i) / sorted.length - Math.PI / 2;
+        node.geo_lat = node.lat;
+        node.geo_lng = node.lng;
+        node.lat = clat + ringR * Math.cos(angle);
+        node.lng = clng + ringR * Math.sin(angle);
+      });
+    }
+  }
+
   function edgeLabelWithCapacity(u, v, f, cap) {
     const base = edgeLabel(u, v, f);
     const flow = Math.round(Math.abs(f));
@@ -2930,6 +3021,91 @@
     return edgeLabelWithCapacity(u, v, mathF, cap);
   }
 
+  function engineeringGeoEdgeLabel(u, v, mathF, dcF, cap, flowMode, nVerts, edgeOff) {
+    const nu = nodeName(u, nVerts);
+    const nv = nodeName(v, nVerts);
+    if (edgeOff) return `${nu}—${nv} ✕`;
+    const m = Math.round(Math.abs(mathF));
+    const d = Math.round(Math.abs(dcF) * 10) / 10;
+    if (flowMode === "compare") return `${nu}—${nv} M${m}|D${d}`;
+    if (flowMode === "dc") return `${nu}—${nv} ${d}/${Math.round(cap)}`;
+    return `${nu}—${nv} ${m}/${Math.round(cap)}`;
+  }
+
+  function isEngineeringGeoState(state) {
+    return !!(state.geo && typeof state.geo === "object" && Object.keys(state.geo).length);
+  }
+
+  function buildEngineeringMapVisData(G, state, mathFlow, surplus, failed, served, dcResult, flowMode, disabled, disabledEdges, geo, positions, seed, engOpts = {}) {
+    const roles = state.roles;
+    const production = state.production;
+    const consumption = state.consumption;
+    const edgeCapacity = state.edge_capacity || {};
+    const reactance = state.edge_reactance || {};
+    const priorities = state.priority || {};
+    const reinforcedSet = new Set((state.reinforced_edges || []).map(k => (typeof k === "string" ? k : edgeKey(k[0], k[1]))));
+    const newSet = new Set((state.new_edges || []).map(k => (typeof k === "string" ? k : edgeKey(k[0], k[1]))));
+    const dcFlow = dcResult.dcFlow || {};
+    const theta = dcResult.theta || {};
+    const displayFlow = flowMode === "dc" ? dcFlow : mathFlow;
+    const nVerts = G.n;
+    const n1Outage = engOpts.n1OutageEdge || null;
+
+    const base = buildMapVisData(
+      G, roles, production, consumption, displayFlow, surplus, seed,
+      disabled, failed, geo, positions, disabledEdges, edgeCapacity, priorities, reinforcedSet, newSet, served
+    );
+    if (!positions) spreadGeoNodeDisplays(base.nodes, seed);
+
+    const kv = state.voltage_level_kv || {};
+    for (const node of base.nodes) {
+      const v = node.id;
+      const role = roles[v];
+      node.letter = node.letter || nodeName(v, nVerts);
+      node.asset_type = assetTypeFromRole(role);
+      node.generation_mw = role === "generator" ? (production[v] || 0) : 0;
+      node.load_mw = role === "consumer" ? (consumption[v] || 0) : 0;
+      node.voltage_level_kv = kv[v] ?? kv[String(v)] ?? null;
+      node.theta = theta[v] != null ? Math.round(theta[v] * 10000) / 10000 : null;
+      node.is_slack = v === dcResult.slack;
+      if (node.is_slack) node.title += `\nSLACK · θ=0`;
+      if (node.theta != null) node.title += `\nθ=${node.theta}`;
+      if (node.voltage_level_kv) node.title += `\n${node.voltage_level_kv} kV`;
+    }
+
+    for (const edge of base.edges) {
+      const [u, v] = String(edge.id).split("-").map(Number);
+      const ek = edgeKey(u, v);
+      const mf = mathFlow[ek] || 0;
+      const df = dcFlow[ek] || 0;
+      const cap = getEdgeCapacityMw(edgeCapacity, u, v);
+      const x = reactance[ek] || 0.1;
+      edge.reactance = x;
+      edge.math_flow_mw = mf;
+      edge.dc_flow_mw = df;
+      edge.flow_difference = Math.round((df - mf) * 100) / 100;
+      const showF = flowMode === "dc" ? df : mf;
+      const dcLoading = cap > 0 ? Math.round((Math.abs(df) / cap) * 1000) / 10 : 0;
+      const showLoading = cap > 0 ? Math.round((Math.abs(showF) / cap) * 1000) / 10 : 0;
+      edge.dc_loading_percent = dcLoading;
+      edge.loading_percent = showLoading;
+      const violation = !edge.disabled_manual_edge && Math.abs(flowMode === "dc" ? df : mf) > cap + 1e-6;
+      edge.capacity_violation = violation;
+      edge.dc_violation = !edge.disabled_manual_edge && Math.abs(df) > cap + 1e-6;
+      edge.flow_mw = showF;
+      edge.n1_outage = n1Outage === ek;
+      if (!edge.disabled_manual_edge || edge.n1_outage) {
+        edge.label = engineeringGeoEdgeLabel(u, v, mf, df, cap, flowMode, nVerts, edge.disabled_manual_edge && !edge.n1_outage);
+      }
+      if (flowMode === "compare") {
+        edge.title = `math ${Math.round(mf)} MW · dc ${Math.round(df * 10) / 10} MW · Δ ${edge.flow_difference}`;
+      } else if (flowMode === "dc") {
+        edge.title = `${nodeName(u, nVerts)}—${nodeName(v, nVerts)} · x=${x} · ${Math.round(df * 10) / 10}/${Math.round(cap)} MW · ${dcLoading}%`;
+      }
+    }
+    return base;
+  }
+
   function buildEngineeringVisData(G, state, mathFlow, surplus, failed, served, dcResult, flowMode, disabled, disabledEdges, positions, seed) {
     const roles = state.roles;
     const production = state.production;
@@ -2946,6 +3122,7 @@
       G, roles, production, consumption, displayFlow, surplus, seed,
       disabled, failed, positions, disabledEdges, edgeCapacity, priorities, reinforcedSet, newSet, served
     );
+    if (!positions) spreadVisNodes(base.nodes);
     const kv = state.voltage_level_kv || {};
     for (const node of base.nodes) {
       const v = node.id;
@@ -2999,12 +3176,20 @@
     state.theta = dcResult.theta;
     state.slack_node = dcResult.slack;
     const dcFeas = analyzeDCFeasibility(G, dcResult.dcFlow || {}, state.edge_capacity, disabled, disabledEdges);
-    const { nodes, edges } = buildEngineeringVisData(
-      G, state, mathFlow, surplus, failed, served, dcResult, flowMode,
-      disabled, disabledEdges, positions, seed
-    );
+    const isGeo = isEngineeringGeoState(state);
+    const { nodes, edges } = isGeo
+      ? buildEngineeringMapVisData(
+        G, state, mathFlow, surplus, failed, served, dcResult, flowMode,
+        disabled, disabledEdges, state.geo, positions, seed, engOpts
+      )
+      : buildEngineeringVisData(
+        G, state, mathFlow, surplus, failed, served, dcResult, flowMode,
+        disabled, disabledEdges, positions, seed
+      );
     const balances = nodeBalance(G, state.production, state.consumption, mathFlow, surplus);
-    const checks = runChecks(G, state.roles, state.production, state.consumption, surplus, balances, params, disabled, failed);
+    const checks = isGeo
+      ? runMapChecks(G, state.roles, state.production, state.consumption, surplus, balances, params, disabled, failed)
+      : runChecks(G, state.roles, state.production, state.consumption, surplus, balances, params, disabled, failed);
     checks.push({
       name: `DC solved: ${dcResult.solved ? "yes" : "no"}${dcResult.error ? ` (${dcResult.error})` : ""}`,
       ok: dcResult.solved,
@@ -3054,7 +3239,88 @@
       },
       panel: buildPanel(nodes, edges),
       flow_mode: flowMode,
+      engineering_metrics: {
+        dc_solved: dcResult.solved,
+        slack_node: dcResult.slack,
+        slack_label: dcResult.slack != null ? nodeName(dcResult.slack, params.n_vertices) : null,
+        max_loading_percent: dcFeas.max_loading_percent,
+        capacity_violations: dcFeas.capacity_violations_count,
+        total_generation: params.total_production,
+        total_load: params.total_consumption,
+      },
     };
+  }
+
+  function generateEngineeringGeo(pool, opts = {}) {
+    const count = +opts.count || 30;
+    const seed = +opts.seed || 42;
+    if (count < 20) throw new Error("Минимум 20 станций для режима 6");
+    if (count > 50) throw new Error("Максимум 50 станций для режима 6");
+    const { stations, passport: geoPassport } = deriveGeoPool(pool, count, seed);
+    const third = Math.floor(count / 3);
+    const rem = count - third * 3;
+    const nGen = third + (rem > 0 ? 1 : 0);
+    const nCons = third + (rem > 1 ? 1 : 0);
+    const nTransit = count - nGen - nCons;
+    const roles = assignRoles(count, nGen, nCons, seed);
+    const geo = {};
+    stations.forEach((s, i) => {
+      geo[String(i)] = {
+        lat: s.lat,
+        lon: s.lon,
+        name: s.name || `СЕС ${i}`,
+        oblast: s.oblast || "",
+        station_id: s.station_id || `ses-${i}`,
+        coord_source: s.coord_source,
+        synthetic: s.synthetic,
+      };
+    });
+    const G = generateGeoGraph(count, roles, geo, seed);
+    const rng = new Random(seed);
+    const generators = G.nodes().filter(v => roles[v] === "generator");
+    const consumers = G.nodes().filter(v => roles[v] === "consumer");
+    const totalProd = rng.randint(generators.length * 8, generators.length * 45);
+    const totalCons = rng.randint(
+      Math.max(consumers.length, Math.floor(totalProd * 0.5)),
+      Math.max(consumers.length, Math.floor(totalProd * 0.82))
+    );
+    const productionList = splitTotal(totalProd, generators.length, rng);
+    const consumptionList = splitTotal(totalCons, consumers.length, rng);
+    const production = {};
+    const consumption = {};
+    generators.forEach((v, i) => (production[v] = productionList[i]));
+    consumers.forEach((v, i) => (consumption[v] = consumptionList[i]));
+    const params = {
+      n_vertices: count,
+      n_generators: nGen,
+      n_consumers: nCons,
+      n_transit: nTransit,
+      total_production: totalProd,
+      total_consumption: totalCons,
+      min_degree: 1,
+      max_degree: 12,
+      seed,
+      mode: "engineering_map",
+      get total_surplus() {
+        return this.total_production - this.total_consumption;
+      },
+    };
+    const passport = {
+      ...geoPassport,
+      reactance: "SYNTHETIC",
+      model: "DC_POWER_FLOW_SCREENING",
+    };
+    const state = {
+      params,
+      roles,
+      edges: G.edges.map(e => [...e]),
+      production,
+      consumption,
+      geo,
+      passport,
+    };
+    initEngineeringState(state, seed);
+    return evaluateStateEngineering(state, new Set(), null, opts);
   }
 
   function generateEngineering(rawParams, engOpts = {}) {
@@ -3088,7 +3354,7 @@
     return b.critical_unserved_count - a.critical_unserved_count;
   }
 
-  function dcN1Analysis(stateJson, disabledList = [], positions = null, engOpts = {}) {
+  function scanDcN1Scenarios(stateJson, disabledList = []) {
     const state = stateFromJson(stateJson);
     const baseDisabled = new Set(disabledList.map(Number));
     const G = stateToGraph(state);
@@ -3121,22 +3387,46 @@
       });
     }
     scenarios.sort(rankN1Scenario);
-    const worst = scenarios[0] || null;
+    return { scenarios, worst: scenarios[0] || null };
+  }
+
+  function applyDcN1Scenario(stateJson, edgeKey, disabledList = [], positions = null, engOpts = {}) {
+    const state = stateFromJson(stateJson);
+    const trialEdges = edgeKeySet(state.disabled_edges);
+    trialEdges.add(edgeKey);
+    const stateTrial = { ...state, disabled_edges: edgeKeyList(trialEdges) };
+    return evaluateStateEngineering(
+      stateTrial,
+      new Set(disabledList.map(Number)),
+      positions,
+      { ...engOpts, n1OutageEdge: edgeKey }
+    );
+  }
+
+  function dcN1Analysis(stateJson, disabledList = [], positions = null, engOpts = {}) {
+    const applyWorst = engOpts.applyWorst !== false;
+    const { scenarios, worst } = scanDcN1Scenarios(stateJson, disabledList);
+    const state = stateFromJson(stateJson);
+    const baseDisabled = new Set(disabledList.map(Number));
     const result = evaluateStateEngineering(state, baseDisabled, positions, engOpts);
     result.dc_n1 = { scenarios: scenarios.slice(0, 15), worst };
     if (worst) {
       result.dc_n1_summary = `Худшее N-1: ${worst.label} · DC violations ${worst.dc_capacity_violations} · loading ${worst.dc_max_loading_percent}%`;
-      const hi = new Set(engOpts.highlightNodes || []);
-      hi.add(worst.u);
-      hi.add(worst.v);
-      engOpts = { ...engOpts, highlightNodes: [...hi] };
-      const trialEdges = edgeKeySet(state.disabled_edges);
-      trialEdges.add(worst.edgeKey);
-      const stateTrial = { ...stateFromJson(stateJson), disabled_edges: edgeKeyList(trialEdges) };
-      const trialView = evaluateStateEngineering(stateTrial, baseDisabled, positions, engOpts);
-      trialView.dc_n1 = result.dc_n1;
-      trialView.dc_n1_summary = result.dc_n1_summary;
-      return trialView;
+      if (applyWorst) {
+        const hi = new Set(engOpts.highlightNodes || []);
+        hi.add(worst.u);
+        hi.add(worst.v);
+        const trialView = applyDcN1Scenario(
+          stateJson,
+          worst.edgeKey,
+          disabledList,
+          positions,
+          { ...engOpts, highlightNodes: [...hi] }
+        );
+        trialView.dc_n1 = result.dc_n1;
+        trialView.dc_n1_summary = result.dc_n1_summary;
+        return trialView;
+      }
     }
     return result;
   }
@@ -3167,10 +3457,13 @@
     findWeakestVertexLarge,
     findWeakestEdgeLarge,
     generateEngineering,
+    generateEngineeringGeo,
     rebalanceEngineering,
     evaluateStateEngineering,
     solveDCPowerFlow,
     dcN1Analysis,
+    scanDcN1Scenarios,
+    applyDcN1Scenario,
     initEngineeringState,
   };
 })(typeof window !== "undefined" ? window : globalThis);
