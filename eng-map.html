@@ -121,6 +121,20 @@
       background: rgba(255,255,255,0.85); border: 1px solid #888;
       pointer-events: none; z-index: 1;
     }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .field-row .field { margin-bottom: 0; }
+    .filter-check { font-size: 12px; display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .risk-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .risk-table th, .risk-table td { padding: 4px 6px; border-bottom: 1px solid #eee; text-align: left; }
+    .risk-table th { color: #555; font-weight: 600; }
+    .risk-table tr.clickable { cursor: pointer; }
+    .risk-table tr.clickable:hover { background: #e8eaf6; }
+    .cascade-timeline { list-style: none; font-size: 11px; max-height: 200px; overflow-y: auto; line-height: 1.45; }
+    .cascade-timeline li { padding: 5px 0; border-bottom: 1px solid #eee; }
+    .cascade-metrics { font-size: 11px; line-height: 1.55; color: #333; background: #fff8e1; border: 1px solid #ffe082; border-radius: 6px; padding: 8px 10px; }
+    .node-marker.dimmed, .node-cluster .cluster-item.dimmed { opacity: 0.15; }
+    .node-marker.cascade-outage { background: #000 !important; border: 4px solid #000 !important; }
+    .node-marker.critical-unserved { box-shadow: 0 0 0 3px #FF5722; }
   </style>
 </head>
 <body>
@@ -129,7 +143,8 @@
     <h1>DC power flow · карта</h1>
     <p id="sidebar-desc">Режим 6 из 8 · Инженерная · малый · гео</p>
     <div class="banner" style="margin:0 16px 10px;padding:8px 10px;background:#e8eaf6;border:1px solid #9fa8da;border-radius:6px;font-size:10px;line-height:1.4;color:#283593">
-      Engineering preview: DC power flow screening. Synthetic parameters. Not an operational grid model.
+      Engineering geo mode uses synthetic electrical parameters.<br>
+      Risk and cascade are simplified screening models, not operational assessments.
     </div>
     <div class="sidebar-panel">
       <form id="params-form">
@@ -155,6 +170,47 @@
           <span id="metrics-text">Постройте сеть на карте</span>
         </div>
         <button type="submit" id="generate-btn" disabled>Построить на карте</button>
+        <div class="field-row" style="margin-top:12px">
+          <div class="field">
+            <label for="filter-voltage">Напряжение, kV</label>
+            <select id="filter-voltage">
+              <option value="">Все</option>
+              <option value="750">750</option>
+              <option value="330">330</option>
+              <option value="110">110</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="filter-type">Тип</label>
+            <select id="filter-type">
+              <option value="">Все</option>
+              <option value="generator">generator</option>
+              <option value="load">load</option>
+              <option value="substation">substation</option>
+              <option value="line">line</option>
+              <option value="transformer">transformer</option>
+            </select>
+          </div>
+        </div>
+        <label class="filter-check"><input type="checkbox" id="filter-top-risk"> Только top risk (топ-10)</label>
+
+        <div class="field" style="margin-top:12px;padding-top:12px;border-top:1px solid #eee">
+          <label style="font-size:13px;font-weight:700">Каскад</label>
+        </div>
+        <div class="hint-box" id="cascade-outage-hint">Стартовый отказ: кликните узел или линию на карте</div>
+        <div class="field-row">
+          <div class="field">
+            <label for="cascade-threshold">Trip threshold, %</label>
+            <input type="number" id="cascade-threshold" value="120" min="100" max="300" step="5">
+          </div>
+          <div class="field">
+            <label for="cascade-max-steps">Max steps</label>
+            <input type="number" id="cascade-max-steps" value="10" min="1" max="30">
+          </div>
+        </div>
+        <button type="button" id="cascade-run-btn" class="secondary" disabled>Запустить каскад</button>
+        <button type="button" id="cascade-reset-btn" class="secondary" disabled>Сбросить каскад</button>
+
         <button type="button" id="dc-n1-btn" class="secondary" disabled>DC N-1 на карте</button>
         <button type="button" id="worst-n1-btn" class="secondary" disabled>Показать худший сценарий</button>
         <div class="hint-box" id="n1-hint">N-1: поочерёдное отключение линий и пересчёт DC</div>
@@ -175,6 +231,9 @@
       <div class="legend-row"><span class="line-swatch" style="background:#FF9800"></span> 70–100%</div>
       <div class="legend-row"><span class="line-swatch" style="background:#c62828"></span> &gt;100% violation</div>
       <div class="legend-row"><span class="line-swatch" style="background:#e65100;height:5px"></span> N-1 outage</div>
+      <div class="legend-row"><span class="line-swatch" style="background:#000;height:5px"></span> Initial outage</div>
+      <div class="legend-row"><span class="line-swatch" style="background:#FF9800;height:4px"></span> Overload before trip</div>
+      <div class="legend-row"><span class="line-swatch" style="background:#9e9e9e;height:2px;border-top:2px dashed #9e9e9e"></span> Cascade-tripped</div>
     </div>
   </main>
 
@@ -183,6 +242,23 @@
     <div class="panel-section">
       <h3>Выбранный объект</h3>
       <dl class="detail-card empty" id="detail-card">Кликните узел или линию на карте</dl>
+    </div>
+    <div class="panel-section">
+      <h3>Top-10 risky objects</h3>
+      <p style="font-size:10px;color:#777;margin-bottom:6px;line-height:1.35">redundancy ≈ 1/degree · SYNTHETIC repair times</p>
+      <div style="overflow-x:auto">
+        <table class="risk-table">
+          <thead>
+            <tr><th>object</th><th>type</th><th>kV</th><th>impact</th><th>repair d</th><th>risk</th></tr>
+          </thead>
+          <tbody id="risk-table-body"><tr><td colspan="6">Постройте сеть</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel-section">
+      <h3>Каскад · timeline</h3>
+      <ul class="cascade-timeline" id="cascade-timeline"><li>Запустите каскад</li></ul>
+      <div class="cascade-metrics" id="cascade-metrics" style="margin-top:8px">—</div>
     </div>
     <div class="panel-section">
       <h3>DC N-1 · топ-5</h3>
@@ -194,7 +270,7 @@
     </div>
   </aside>
 
-  <script src="graph_core.js?v=11"></script>
+  <script src="graph_core.js?v=13"></script>
   <script>
     const ROLE_COLORS = { generator: "#4CAF50", consumer: "#F44336", transit: "#2196F3" };
     const ROLE_NAMES = { generator: "генератор", consumer: "потребитель", transit: "транзит" };
@@ -215,6 +291,10 @@
     let n1Scenarios = null;
     let n1Worst = null;
     let showingWorst = false;
+    let cascadeInitialOutage = null;
+    let preCascadeSnapshot = null;
+    let cascadeActive = false;
+    let rawData = null;
 
     const errorEl = document.getElementById("error");
     const poolHint = document.getElementById("pool-hint");
@@ -230,6 +310,28 @@
     const flowModeEl = document.getElementById("flow_mode");
     const togglePanelsBtn = document.getElementById("toggle-panels-btn");
     const form = document.getElementById("params-form");
+    const filterVoltageEl = document.getElementById("filter-voltage");
+    const filterTypeEl = document.getElementById("filter-type");
+    const filterTopRiskEl = document.getElementById("filter-top-risk");
+    const riskTableBody = document.getElementById("risk-table-body");
+    const cascadeOutageHint = document.getElementById("cascade-outage-hint");
+    const cascadeThresholdEl = document.getElementById("cascade-threshold");
+    const cascadeMaxStepsEl = document.getElementById("cascade-max-steps");
+    const cascadeRunBtn = document.getElementById("cascade-run-btn");
+    const cascadeResetBtn = document.getElementById("cascade-reset-btn");
+    const cascadeTimeline = document.getElementById("cascade-timeline");
+    const cascadeMetrics = document.getElementById("cascade-metrics");
+
+    function edgeKey(u, v) {
+      const a = Math.min(+u, +v);
+      const b = Math.max(+u, +v);
+      return `${a},${b}`;
+    }
+
+    function edgeKeyFromVisId(id) {
+      const [u, v] = String(id).split("-").map(Number);
+      return edgeKey(u, v);
+    }
 
     function nodeId(raw) {
       return typeof raw === "string" ? parseInt(raw, 10) : raw;
@@ -276,20 +378,24 @@
       selectedEdgeId = null;
       detailCard.className = "detail-card";
       const type = node.asset_type || ASSET_NAMES[node.role] || node.role;
-      const genLoad = node.role === "generator"
+      const genLoad = node.role === "generator" || node.asset_type === "generator"
         ? `generation: ${node.generation_mw ?? 0} MW`
-        : node.role === "consumer"
+        : node.role === "consumer" || node.asset_type === "load"
           ? `load: ${node.load_mw ?? 0} MW`
           : "—";
       detailCard.innerHTML = `
         <dt>Узел</dt><dd>${node.letter || node.id} (#${node.id})</dd>
-        <dt>Тип</dt><dd>${type}</dd>
-        <dt>Generation / load</dt><dd>${genLoad}</dd>
-        <dt>θ (theta)</dt><dd>${node.theta != null ? node.theta : "—"}</dd>
+        <dt>type</dt><dd>${type}</dd>
         <dt>voltage_level_kv</dt><dd>${node.voltage_level_kv != null ? node.voltage_level_kv + " kV" : "—"}</dd>
+        <dt>generation / load</dt><dd>${genLoad}</dd>
+        <dt>θ</dt><dd>${node.theta != null ? node.theta : "—"}</dd>
+        <dt>repair_time_days</dt><dd>${node.repair_time_days ?? "—"} (${node.repair_time_source || "SYNTHETIC"})</dd>
+        <dt>risk_score</dt><dd>${node.risk_score ?? 0} · impact ${node.impact_mw ?? 0} MW · redundancy ${node.redundancy_factor ?? "—"}</dd>
         <dt>slack</dt><dd>${node.is_slack ? "yes" : "no"}</dd>
         ${node.station_name ? `<dt>Станция</dt><dd>${node.station_name}</dd>` : ""}
       `;
+      cascadeInitialOutage = { kind: "node", id: nodeId(node.id), label: node.letter || String(node.id) };
+      updateCascadeOutageHint();
       refreshMarkerStyles();
     }
 
@@ -299,15 +405,25 @@
       detailCard.className = "detail-card";
       const loading = edge.dc_loading_percent ?? edge.loading_percent ?? 0;
       const violation = edge.dc_violation || edge.capacity_violation;
+      const et = edge.edge_type || "line";
+      const voltage = et === "transformer"
+        ? `${edge.from_voltage_kv ?? "?"} → ${edge.to_voltage_kv ?? "?"} kV`
+        : `${edge.voltage_level_kv ?? "—"} kV`;
+      const [u, v] = String(edge.id).split("-").map(Number);
       detailCard.innerHTML = `
         <dt>Линия</dt><dd>${edge.label || edge.id}</dd>
-        <dt>from → to</dt><dd>#${edge.from} → #${edge.to}</dd>
-        <dt>reactance</dt><dd>${edge.reactance ?? "—"}</dd>
+        <dt>type</dt><dd>${et}</dd>
+        <dt>voltage</dt><dd>${voltage}</dd>
         <dt>capacity_mw</dt><dd>${edge.capacity_mw ?? "—"}</dd>
+        <dt>reactance</dt><dd>${edge.reactance ?? "—"}</dd>
         <dt>dc_flow_mw</dt><dd>${edge.dc_flow_mw != null ? Math.round(edge.dc_flow_mw * 10) / 10 : "—"}</dd>
-        <dt>dc_loading_percent</dt><dd>${loading}%</dd>
+        <dt>loading_percent</dt><dd>${loading}%</dd>
+        <dt>repair_time_days</dt><dd>${edge.repair_time_days ?? "—"} (${edge.repair_time_source || "SYNTHETIC"})</dd>
+        <dt>risk_score</dt><dd>${edge.risk_score ?? 0} · impact ${edge.impact_mw ?? 0} MW</dd>
         <dt>violation</dt><dd>${violation ? "yes" : "no"}</dd>
       `;
+      cascadeInitialOutage = { kind: "edge", edgeKey: edgeKey(u, v), label: edge.label || edge.id };
+      updateCascadeOutageHint();
       refreshMarkerStyles();
     }
 
@@ -343,6 +459,163 @@
       n1Hint.className = "hint-box active";
     }
 
+    function updateCascadeOutageHint() {
+      if (!cascadeOutageHint) return;
+      if (!cascadeInitialOutage) {
+        cascadeOutageHint.textContent = "Стартовый отказ: кликните узел или линию на карте";
+        cascadeOutageHint.className = "hint-box";
+        if (cascadeRunBtn) cascadeRunBtn.disabled = !graphState;
+        return;
+      }
+      const label = cascadeInitialOutage.label || cascadeInitialOutage.kind;
+      cascadeOutageHint.textContent = `Стартовый отказ: ${cascadeInitialOutage.kind} · ${label}`;
+      cascadeOutageHint.className = "hint-box active";
+      if (cascadeRunBtn) cascadeRunBtn.disabled = !graphState || cascadeActive;
+    }
+
+    function savePreCascadeSnapshot() {
+      if (!rawData || preCascadeSnapshot) return;
+      preCascadeSnapshot = {
+        data: JSON.parse(JSON.stringify(rawData)),
+        graphState: graphState,
+      };
+      if (cascadeResetBtn) cascadeResetBtn.disabled = false;
+    }
+
+    function renderCascadePanel(data) {
+      const tl = data?.dc_cascade?.timeline || [];
+      if (!cascadeTimeline) return;
+      if (!tl.length) {
+        cascadeTimeline.innerHTML = "<li>Запустите каскад</li>";
+      } else {
+        cascadeTimeline.innerHTML = tl.map(t => `<li><b>Step ${t.step}:</b> ${t.message}</li>`).join("");
+      }
+      const m = data?.dc_cascade?.metrics;
+      if (!cascadeMetrics) return;
+      if (!m) {
+        cascadeMetrics.textContent = "—";
+        return;
+      }
+      cascadeMetrics.innerHTML = [
+        `cascade_steps: <b>${m.cascade_steps}</b>`,
+        `initial_outage: <b>${m.initial_outage}</b>`,
+        `failed_assets: <b>${m.failed_assets_count}</b>`,
+        `failed_edges: <b>${m.failed_edges?.length ?? 0}</b>`,
+        `failed_nodes: <b>${m.failed_nodes?.length ?? 0}</b>`,
+        `max_loading: <b>${m.max_loading_percent}%</b>`,
+        `unserved_load: <b>${m.unserved_load_mw} MW</b>`,
+        `critical_unserved: <b>${m.critical_unserved_count}</b>`,
+        `dc_solved_final: <b>${m.dc_solved_final ? "yes" : "no"}</b>`,
+        `stable: <b>${m.stable ? "yes" : "no"}</b>`,
+      ].join("<br>");
+    }
+
+    function renderRiskTable(data) {
+      const rows = data?.top_risk_objects || [];
+      if (!riskTableBody) return;
+      if (!rows.length) {
+        riskTableBody.innerHTML = "<tr><td colspan=\"6\">Нет данных</td></tr>";
+        return;
+      }
+      riskTableBody.innerHTML = rows.map(r => `
+        <tr class="clickable" data-kind="${r.kind}" data-ref="${r.kind === "node" ? r.id : (r.edgeKey || r.id)}">
+          <td>${r.object}</td>
+          <td>${r.type}</td>
+          <td>${r.voltage_kv}</td>
+          <td>${r.impact_mw}</td>
+          <td>${r.repair_time_days}</td>
+          <td><b>${r.risk_score}</b></td>
+        </tr>
+      `).join("");
+      riskTableBody.querySelectorAll("tr.clickable").forEach(tr => {
+        tr.addEventListener("click", () => {
+          const kind = tr.dataset.kind;
+          const ref = tr.dataset.ref;
+          if (!rawData) return;
+          if (kind === "node") {
+            const n = rawData.nodes.find(x => nodeId(x.id) === nodeId(ref));
+            if (n) focusOnNode(ref);
+          } else {
+            const e = rawData.edges.find(x => x.id === ref || edgeKeyFromVisId(x.id) === ref);
+            if (e) focusOnEdge(e.id);
+          }
+        });
+      });
+    }
+
+    function getVisFilters() {
+      return {
+        voltage: filterVoltageEl?.value || "",
+        assetType: filterTypeEl?.value || "",
+        topRiskOnly: !!filterTopRiskEl?.checked,
+      };
+    }
+
+    function filterVisData(data) {
+      if (!data) return data;
+      const f = getVisFilters();
+      if (!f.voltage && !f.assetType && !f.topRiskOnly) return data;
+      const topSet = new Set((data.top_risk_objects || []).map(o =>
+        o.kind === "node" ? `n:${o.id}` : `e:${o.edgeKey}`
+      ));
+      const nodeTypes = new Set(["bus", "generator", "load", "substation"]);
+      const edgeTypes = new Set(["line", "transformer"]);
+      const nodes = data.nodes.map(n => {
+        let match = true;
+        if (f.voltage && String(n.voltage_level_kv) !== f.voltage) match = false;
+        if (f.assetType && nodeTypes.has(f.assetType) && n.asset_type !== f.assetType) match = false;
+        if (f.topRiskOnly && !topSet.has(`n:${nodeId(n.id)}`)) match = false;
+        if (f.assetType && edgeTypes.has(f.assetType)) match = false;
+        return match ? n : { ...n, opacity: 0.12 };
+      });
+      const edges = data.edges.map(e => {
+        let match = true;
+        const et = e.edge_type || "line";
+        const vtag = et === "transformer"
+          ? `${e.from_voltage_kv || ""}${e.to_voltage_kv || ""}`
+          : String(e.voltage_level_kv || "");
+        if (f.voltage && !vtag.includes(f.voltage)) match = false;
+        if (f.assetType && edgeTypes.has(f.assetType) && et !== f.assetType) match = false;
+        if (f.assetType && nodeTypes.has(f.assetType)) match = false;
+        if (f.topRiskOnly) {
+          const [u, v] = String(e.id).split("-").map(Number);
+          if (!topSet.has(`e:${edgeKey(u, v)}`)) match = false;
+        }
+        return match ? e : { ...e, opacity: 0.1 };
+      });
+      return { ...data, nodes, edges };
+    }
+
+    function focusOnNode(id) {
+      const n = rawData?.nodes.find(x => nodeId(x.id) === nodeId(id));
+      if (!n || !leafletMap) return;
+      const ll = displayLatLng(n);
+      leafletMap.setView([ll.lat, ll.lng], Math.max(leafletMap.getZoom(), 9));
+      renderNodeDetail(n);
+      redrawFiltered(false);
+    }
+
+    function focusOnEdge(edgeId) {
+      const e = rawData?.edges.find(x => x.id === edgeId);
+      if (!e || !leafletMap) return;
+      const nodeMap = new Map(rawData.nodes.map(n => [nodeId(n.id), n]));
+      const from = nodeMap.get(nodeId(e.from));
+      const to = nodeMap.get(nodeId(e.to));
+      if (!from || !to) return;
+      const fromLl = displayLatLng(from);
+      const toLl = displayLatLng(to);
+      const midLat = (fromLl.lat + toLl.lat) / 2;
+      const midLng = (fromLl.lng + toLl.lng) / 2;
+      leafletMap.setView([midLat, midLng], Math.max(leafletMap.getZoom(), 9));
+      renderEdgeDetail(e);
+      redrawFiltered(false);
+    }
+
+    function redrawFiltered(fitBounds) {
+      if (!rawData) return;
+      drawGraph(filterVisData(rawData), fitBounds);
+    }
+
     function initMap() {
       if (leafletMap) return;
       leafletMap = L.map("leaflet-map", { zoomControl: true }).setView([48.5, 31.2], 6);
@@ -361,9 +634,13 @@
       const letter = node.letter || String(node.id);
       let bg = ROLE_COLORS[node.role] || "#888";
       let cls = "node-marker";
+      if (node.opacity != null && node.opacity < 0.5) cls += " dimmed";
+      if (node.cascade_initial_outage) cls += " cascade-outage";
+      else if (node.cascade_critical_unserved) cls += " critical-unserved";
       if (node.is_slack) cls += " slack";
       if (selectedNodeId === nodeId(node.id)) cls += " selected";
-      return `<div class="${cls}" style="background:${bg}">${letter}</div>`;
+      const style = node.cascade_initial_outage ? `background:#000;border:4px solid #000` : `background:${bg}`;
+      return `<div class="${cls}" style="${style}">${letter}</div>`;
     }
 
     function coordKey(lat, lng) {
@@ -406,10 +683,14 @@
         const letter = node.letter || String(node.id);
         let bg = ROLE_COLORS[node.role] || "#888";
         let cls = "cluster-item";
+        if (node.opacity != null && node.opacity < 0.5) cls += " dimmed";
+        if (node.cascade_initial_outage) { cls += " cascade-outage"; bg = "#000"; }
+        else if (node.cascade_critical_unserved) cls += " critical-unserved";
         if (node.is_slack) cls += " slack";
         if (selectedNodeId === nodeId(node.id)) cls += " selected";
         const tip = `${letter} · ${ROLE_NAMES[node.role] || node.role}`.replace(/"/g, "&quot;");
-        return `<div class="${cls}" data-node-id="${nodeId(node.id)}" style="left:${x}px;top:${y}px;background:${bg};z-index:${z}" title="${tip}">${letter}</div>`;
+        const styleExtra = node.cascade_initial_outage ? `background:#000;border:4px solid #000;` : `background:${bg};`;
+        return `<div class="${cls}" data-node-id="${nodeId(node.id)}" style="left:${x}px;top:${y}px;${styleExtra}z-index:${z}" title="${tip}">${letter}</div>`;
       });
       return L.divIcon({
         className: "",
@@ -466,6 +747,30 @@
       }
     }
 
+    function edgeLineStyle(e, loading) {
+      const isSelected = selectedEdgeId === e.id;
+      const baseOpacity = e.opacity != null ? e.opacity : 0.8;
+      if (e.cascade_initial_outage) {
+        return { color: "#000000", weight: 6, opacity: Math.max(baseOpacity, 0.95), dashArray: null };
+      }
+      if (e.cascade_tripped) {
+        return { color: "#9e9e9e", weight: 2, opacity: Math.max(baseOpacity, 0.65), dashArray: "6 8" };
+      }
+      if (e.cascade_overload) {
+        return { color: "#FF9800", weight: 4, opacity: Math.max(baseOpacity, 0.9), dashArray: null };
+      }
+      if (e.n1_outage) {
+        return { color: "#e65100", weight: 6, opacity: Math.max(baseOpacity, 0.95), dashArray: "10 6" };
+      }
+      const color = dcLoadingColor(loading, e);
+      return {
+        color,
+        weight: isSelected ? 5 : e.dc_violation ? 4 : 3,
+        opacity: baseOpacity,
+        dashArray: null,
+      };
+    }
+
     function drawGraph(data, fitBounds) {
       lastData = data;
       markersLayer.clearLayers();
@@ -514,16 +819,14 @@
         const fromLl = displayLatLng(from);
         const toLl = displayLatLng(to);
         const loading = e.dc_loading_percent ?? e.loading_percent ?? 0;
-        const isSelected = selectedEdgeId === e.id;
-        const n1Out = e.n1_outage;
-        const color = dcLoadingColor(loading, e);
+        const style = edgeLineStyle(e, loading);
         const line = L.polyline(
           [[fromLl.lat, fromLl.lng], [toLl.lat, toLl.lng]],
           {
-            color,
-            weight: n1Out ? 6 : isSelected ? 5 : e.dc_violation ? 4 : 3,
-            opacity: n1Out ? 0.95 : 0.8,
-            dashArray: n1Out ? "10 6" : null,
+            color: style.color,
+            weight: style.weight,
+            opacity: style.opacity,
+            dashArray: style.dashArray,
           }
         );
         const hitLine = L.polyline(
@@ -569,8 +872,11 @@
     }
 
     function applyResult(data, fitBounds) {
+      rawData = data;
       graphState = data.state;
       renderMetrics(data);
+      renderRiskTable(data);
+      renderCascadePanel(cascadeActive ? data : null);
       if (data.dc_n1) {
         n1Scenarios = data.dc_n1.scenarios;
         n1Worst = data.dc_n1.worst;
@@ -589,9 +895,68 @@
           <dt>Critical unserved</dt><dd>${n1Worst.critical_unserved_count}</dd>
         `;
       }
-      drawGraph(data, fitBounds);
+      drawGraph(filterVisData(data), fitBounds);
       dcN1Btn.disabled = false;
       worstN1Btn.disabled = !n1Worst;
+      if (cascadeRunBtn && !cascadeActive) cascadeRunBtn.disabled = !graphState || !cascadeInitialOutage;
+    }
+
+    function applyCascadeResult(data) {
+      cascadeActive = true;
+      rawData = data;
+      graphState = data.state;
+      renderMetrics(data);
+      renderRiskTable(data);
+      renderCascadePanel(data);
+      drawGraph(filterVisData(data), false);
+      if (cascadeResetBtn) cascadeResetBtn.disabled = !preCascadeSnapshot;
+      if (cascadeRunBtn) cascadeRunBtn.disabled = true;
+    }
+
+    function resetCascade() {
+      if (!preCascadeSnapshot) return;
+      showError("");
+      cascadeActive = false;
+      const snap = preCascadeSnapshot;
+      preCascadeSnapshot = null;
+      rawData = snap.data;
+      graphState = snap.graphState;
+      renderMetrics(snap.data);
+      renderRiskTable(snap.data);
+      renderCascadePanel(null);
+      drawGraph(filterVisData(snap.data), false);
+      if (cascadeResetBtn) cascadeResetBtn.disabled = true;
+      updateCascadeOutageHint();
+    }
+
+    async function runCascade() {
+      if (!graphState || !cascadeInitialOutage) {
+        showError("Выберите стартовый отказ: кликните узел или линию");
+        return;
+      }
+      showError("");
+      savePreCascadeSnapshot();
+      cascadeRunBtn.disabled = true;
+      cascadeRunBtn.textContent = "Каскад…";
+      try {
+        const data = GraphCore.runDCCascade(
+          graphState,
+          [],
+          getPositions(),
+          getEngOpts(),
+          {
+            initialOutage: cascadeInitialOutage,
+            tripThreshold: +(cascadeThresholdEl?.value || 120),
+            maxSteps: +(cascadeMaxStepsEl?.value || 10),
+          }
+        );
+        applyCascadeResult(data);
+      } catch (e) {
+        showError(e.message || "Ошибка каскада");
+      } finally {
+        cascadeRunBtn.disabled = cascadeActive;
+        cascadeRunBtn.textContent = "Запустить каскад";
+      }
     }
 
     async function rebalance() {
@@ -617,11 +982,17 @@
       showingWorst = false;
       n1Scenarios = null;
       n1Worst = null;
+      cascadeActive = false;
+      preCascadeSnapshot = null;
+      cascadeInitialOutage = null;
       scenarioSection.style.display = "none";
       n1List.innerHTML = "<li>Запустите «DC N-1 на карте»</li>";
       n1Hint.textContent = "N-1: поочерёдное отключение линий и пересчёт DC";
       n1Hint.className = "hint-box";
       clearDetail();
+      renderCascadePanel(null);
+      if (cascadeResetBtn) cascadeResetBtn.disabled = true;
+      updateCascadeOutageHint();
       try {
         const data = GraphCore.generateEngineeringGeo(solarPool, { count, seed, ...getEngOpts() });
         applyResult(data, true);
@@ -731,6 +1102,11 @@
     form.addEventListener("submit", e => { e.preventDefault(); generate(); });
     dcN1Btn.addEventListener("click", runDcN1);
     worstN1Btn.addEventListener("click", showWorstScenario);
+    if (cascadeRunBtn) cascadeRunBtn.addEventListener("click", runCascade);
+    if (cascadeResetBtn) cascadeResetBtn.addEventListener("click", resetCascade);
+    if (filterVoltageEl) filterVoltageEl.addEventListener("change", () => redrawFiltered(false));
+    if (filterTypeEl) filterTypeEl.addEventListener("change", () => redrawFiltered(false));
+    if (filterTopRiskEl) filterTopRiskEl.addEventListener("change", () => redrawFiltered(false));
     togglePanelsBtn.addEventListener("click", () => setGraphOnlyMode(!document.body.classList.contains("graph-only")));
     if (flowModeEl) flowModeEl.addEventListener("change", () => graphState && rebalance());
 
