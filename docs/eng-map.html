@@ -135,6 +135,23 @@
     .node-marker.dimmed, .node-cluster .cluster-item.dimmed { opacity: 0.15; }
     .node-marker.cascade-outage { background: #000 !important; border: 4px solid #000 !important; }
     .node-marker.critical-unserved { box-shadow: 0 0 0 3px #FF5722; }
+    .node-marker.mc-risky { box-shadow: 0 0 0 3px #9C27B0; }
+    .node-marker.pareto-highlight { box-shadow: 0 0 0 4px #FFC107; }
+    .node-cluster .cluster-item.mc-risky { box-shadow: 0 0 0 2px #9C27B0; }
+    .node-cluster .cluster-item.pareto-highlight { box-shadow: 0 0 0 3px #FFC107; }
+    .mc-progress { margin: 10px 0; }
+    .mc-progress-bar { height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden; }
+    .mc-progress-fill { height: 100%; background: #5c6bc0; width: 0%; transition: width 0.15s; }
+    .mc-progress-text { font-size: 11px; color: #555; margin-top: 4px; }
+    .mc-summary { font-size: 11px; line-height: 1.55; background: #e3f2fd; border: 1px solid #90caf9; border-radius: 6px; padding: 8px 10px; margin-top: 8px; }
+    .mc-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+    .mc-table th, .mc-table td { padding: 3px 5px; border-bottom: 1px solid #eee; text-align: left; }
+    .mc-table th { color: #555; font-weight: 600; }
+    .mc-table tr.clickable { cursor: pointer; }
+    .mc-table tr.clickable:hover { background: #e8eaf6; }
+    .mc-table tr.selected { background: #fff3e0; }
+    .pareto-link { cursor: pointer; text-decoration: underline; color: #1565c0; }
+    .pareto-link:hover { color: #0d47a1; }
   </style>
 </head>
 <body>
@@ -144,7 +161,8 @@
     <p id="sidebar-desc">Режим 6 из 8 · Инженерная · малый · гео</p>
     <div class="banner" style="margin:0 16px 10px;padding:8px 10px;background:#e8eaf6;border:1px solid #9fa8da;border-radius:6px;font-size:10px;line-height:1.4;color:#283593">
       Engineering geo mode uses synthetic electrical parameters.<br>
-      Risk and cascade are simplified screening models, not operational assessments.
+      Risk and cascade are simplified screening models, not operational assessments.<br>
+      Monte Carlo and Pareto are demo screening tools, not operational recommendations.
     </div>
     <div class="sidebar-panel">
       <form id="params-form">
@@ -211,6 +229,53 @@
         <button type="button" id="cascade-run-btn" class="secondary" disabled>Запустить каскад</button>
         <button type="button" id="cascade-reset-btn" class="secondary" disabled>Сбросить каскад</button>
 
+        <div class="field" style="margin-top:12px;padding-top:12px;border-top:1px solid #eee">
+          <label style="font-size:13px;font-weight:700">Monte Carlo</label>
+          <p style="font-size:10px;color:#777;margin-top:4px;line-height:1.35">damage = unserved + crit×100 + failed×5 + cascade×2 (synthetic)</p>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="mc-runs">Runs</label>
+            <select id="mc-runs">
+              <option value="100">100</option>
+              <option value="1000">1000</option>
+              <option value="5000">5000</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="mc-max-outages">Max outages / run</label>
+            <select id="mc-max-outages">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3" selected>3</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="mc-seed">Seed</label>
+            <input type="number" id="mc-seed" value="42">
+          </div>
+          <div class="field">
+            <label for="mc-use-cascade">Use cascade</label>
+            <select id="mc-use-cascade">
+              <option value="yes" selected>yes</option>
+              <option value="no">no</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="mc-threshold">Trip threshold (cascade), %</label>
+          <input type="number" id="mc-threshold" value="120" min="100" max="300" step="5">
+        </div>
+        <button type="button" id="mc-run-btn" class="secondary" disabled>Запустить Monte Carlo</button>
+        <button type="button" id="mc-stop-btn" class="secondary" disabled>Остановить</button>
+        <button type="button" id="mc-reset-btn" class="secondary" disabled>Сбросить результаты</button>
+        <div class="mc-progress" id="mc-progress-wrap" style="display:none">
+          <div class="mc-progress-bar"><div class="mc-progress-fill" id="mc-progress-fill"></div></div>
+          <div class="mc-progress-text" id="mc-progress-text">0 / 0</div>
+        </div>
+
         <button type="button" id="dc-n1-btn" class="secondary" disabled>DC N-1 на карте</button>
         <button type="button" id="worst-n1-btn" class="secondary" disabled>Показать худший сценарий</button>
         <div class="hint-box" id="n1-hint">N-1: поочерёдное отключение линий и пересчёт DC</div>
@@ -234,6 +299,8 @@
       <div class="legend-row"><span class="line-swatch" style="background:#000;height:5px"></span> Initial outage</div>
       <div class="legend-row"><span class="line-swatch" style="background:#FF9800;height:4px"></span> Overload before trip</div>
       <div class="legend-row"><span class="line-swatch" style="background:#9e9e9e;height:2px;border-top:2px dashed #9e9e9e"></span> Cascade-tripped</div>
+      <div class="legend-row"><span class="dot" style="border:3px solid #9C27B0;background:#fff"></span> MC risky</div>
+      <div class="legend-row"><span class="dot" style="border:4px solid #FFC107;background:#fff"></span> Pareto protect</div>
     </div>
   </main>
 
@@ -259,6 +326,29 @@
       <h3>Каскад · timeline</h3>
       <ul class="cascade-timeline" id="cascade-timeline"><li>Запустите каскад</li></ul>
       <div class="cascade-metrics" id="cascade-metrics" style="margin-top:8px">—</div>
+    </div>
+    <div class="panel-section">
+      <h3>Monte Carlo · Top-10 worst</h3>
+      <div style="overflow-x:auto">
+        <table class="mc-table">
+          <thead>
+            <tr><th>run</th><th>outages</th><th>damage</th><th>unserved</th><th>crit</th><th>steps</th><th>stable</th></tr>
+          </thead>
+          <tbody id="mc-worst-body"><tr><td colspan="7">Запустите Monte Carlo</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel-section">
+      <h3>Top risky by Monte Carlo</h3>
+      <div style="overflow-x:auto">
+        <table class="mc-table">
+          <thead>
+            <tr><th>object</th><th>type</th><th>freq worst</th><th>crit hits</th><th>avg damage</th></tr>
+          </thead>
+          <tbody id="mc-freq-body"><tr><td colspan="5">—</td></tr></tbody>
+        </table>
+      </div>
+      <div class="mc-summary" id="mc-pareto-summary">Pareto: —</div>
     </div>
     <div class="panel-section">
       <h3>DC N-1 · топ-5</h3>
@@ -295,6 +385,17 @@
     let preCascadeSnapshot = null;
     let cascadeActive = false;
     let rawData = null;
+    let baselineRawData = null;
+    let mcResults = null;
+    let mcRunning = false;
+    let mcCancel = false;
+    let mcPreviewActive = false;
+    let preMcPreviewSnapshot = null;
+    let selectedMcRunId = null;
+    let mcRiskyKeys = new Set();
+    let paretoKeys = new Set();
+    let paretoHighlightCount = null;
+    let selectedMcObjectKey = null;
 
     const errorEl = document.getElementById("error");
     const poolHint = document.getElementById("pool-hint");
@@ -321,6 +422,29 @@
     const cascadeResetBtn = document.getElementById("cascade-reset-btn");
     const cascadeTimeline = document.getElementById("cascade-timeline");
     const cascadeMetrics = document.getElementById("cascade-metrics");
+    const mcRunsEl = document.getElementById("mc-runs");
+    const mcMaxOutagesEl = document.getElementById("mc-max-outages");
+    const mcSeedEl = document.getElementById("mc-seed");
+    const mcUseCascadeEl = document.getElementById("mc-use-cascade");
+    const mcThresholdEl = document.getElementById("mc-threshold");
+    const mcRunBtn = document.getElementById("mc-run-btn");
+    const mcStopBtn = document.getElementById("mc-stop-btn");
+    const mcResetBtn = document.getElementById("mc-reset-btn");
+    const mcProgressWrap = document.getElementById("mc-progress-wrap");
+    const mcProgressFill = document.getElementById("mc-progress-fill");
+    const mcProgressText = document.getElementById("mc-progress-text");
+    const mcWorstBody = document.getElementById("mc-worst-body");
+    const mcFreqBody = document.getElementById("mc-freq-body");
+    const mcParetoSummary = document.getElementById("mc-pareto-summary");
+
+    function nodeMcKey(id) {
+      return `node:${nodeId(id)}`;
+    }
+
+    function edgeMcKeyFromId(edgeId) {
+      const [u, v] = String(edgeId).split("-").map(Number);
+      return `edge:${edgeKey(u, v)}`;
+    }
 
     function edgeKey(u, v) {
       const a = Math.min(+u, +v);
@@ -611,6 +735,283 @@
       redrawFiltered(false);
     }
 
+    function clearMcHighlights() {
+      mcRiskyKeys = new Set();
+      paretoKeys = new Set();
+      paretoHighlightCount = null;
+      selectedMcObjectKey = null;
+    }
+
+    function highlightMcObject(key, openCard = true) {
+      if (!key || !baselineRawData) return;
+      selectedMcObjectKey = key;
+      mcRiskyKeys = new Set([key]);
+      paretoKeys = new Set();
+      paretoHighlightCount = null;
+      if (mcPreviewActive) resetMcPreview();
+      rawData = baselineRawData;
+      if (key.startsWith("node:")) {
+        const id = +key.slice(5);
+        const n = rawData.nodes.find(x => nodeId(x.id) === id);
+        if (n) {
+          if (openCard) focusOnNode(id);
+          else redrawFiltered(false);
+          return;
+        }
+      }
+      if (key.startsWith("edge:")) {
+        const ek = key.slice(5);
+        const e = rawData.edges.find(x => edgeMcKeyFromId(x.id) === ek || x.id === ek);
+        if (e) {
+          if (openCard) focusOnEdge(e.id);
+          else redrawFiltered(false);
+        }
+      }
+    }
+
+    function highlightPareto(protectCount) {
+      if (!mcResults?.aggregate?.object_frequency?.length) return;
+      if (mcPreviewActive) resetMcPreview();
+      paretoHighlightCount = protectCount;
+      paretoKeys = new Set(
+        mcResults.aggregate.object_frequency.slice(0, protectCount).map(o => o.key)
+      );
+      mcRiskyKeys = new Set(paretoKeys);
+      rawData = baselineRawData || rawData;
+      redrawFiltered(false);
+      renderMonteCarloPanels(mcResults);
+    }
+
+    function getMcOpts() {
+      return {
+        runs: +(mcRunsEl?.value || 100),
+        maxOutagesPerScenario: +(mcMaxOutagesEl?.value || 3),
+        seed: +(mcSeedEl?.value || 42),
+        useCascade: mcUseCascadeEl?.value !== "no",
+        tripThreshold: +(mcThresholdEl?.value || cascadeThresholdEl?.value || 120),
+        maxCascadeSteps: +(cascadeMaxStepsEl?.value || 10),
+      };
+    }
+
+    function updateMcProgress(completed, total) {
+      if (!mcProgressWrap) return;
+      mcProgressWrap.style.display = total > 0 ? "block" : "none";
+      const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+      if (mcProgressFill) mcProgressFill.style.width = `${pct}%`;
+      if (mcProgressText) mcProgressText.textContent = `${completed} / ${total} runs`;
+    }
+
+    function renderMonteCarloPanels(results) {
+      if (!results?.aggregate) {
+        if (mcWorstBody) mcWorstBody.innerHTML = "<tr><td colspan=\"7\">Запустите Monte Carlo</td></tr>";
+        if (mcFreqBody) mcFreqBody.innerHTML = "<tr><td colspan=\"5\">—</td></tr>";
+        if (mcParetoSummary) mcParetoSummary.textContent = "Pareto: —";
+        return;
+      }
+      const worst = results.aggregate.worst_scenarios || [];
+      if (mcWorstBody) {
+        if (!worst.length) {
+          mcWorstBody.innerHTML = "<tr><td colspan=\"7\">Нет сценариев</td></tr>";
+        } else {
+          mcWorstBody.innerHTML = worst.map(r => `
+            <tr class="clickable${selectedMcRunId === r.run_id ? " selected" : ""}" data-run-id="${r.run_id}">
+              <td>#${r.run_id}</td>
+              <td title="${r.outaged_objects_label}">${(r.outaged_objects_label || "").slice(0, 28)}${(r.outaged_objects_label || "").length > 28 ? "…" : ""}</td>
+              <td><b>${r.damage_score}</b></td>
+              <td>${r.unserved_load_mw}</td>
+              <td>${r.critical_unserved_count}</td>
+              <td>${r.cascade_steps}</td>
+              <td>${r.stable ? "yes" : "no"}</td>
+            </tr>
+          `).join("");
+          mcWorstBody.querySelectorAll("tr.clickable").forEach(tr => {
+            tr.addEventListener("click", () => previewMcScenario(+tr.dataset.runId));
+          });
+        }
+      }
+      const freq = results.aggregate.object_frequency || [];
+      if (mcFreqBody) {
+        if (!freq.length) {
+          mcFreqBody.innerHTML = "<tr><td colspan=\"5\">—</td></tr>";
+        } else {
+          mcFreqBody.innerHTML = freq.slice(0, 10).map(r => `
+            <tr class="clickable${selectedMcObjectKey === r.key ? " selected" : ""}" data-mc-key="${r.key}">
+              <td>${r.object}</td>
+              <td>${r.type}</td>
+              <td>${r.frequency_in_worst}</td>
+              <td>${r.critical_hits}</td>
+              <td>${r.avg_damage_score}</td>
+            </tr>
+          `).join("");
+          mcFreqBody.querySelectorAll("tr.clickable").forEach(tr => {
+            tr.addEventListener("click", () => highlightMcObject(tr.dataset.mcKey, true));
+          });
+        }
+      }
+      if (mcParetoSummary) {
+        const pareto = results.pareto || [];
+        if (!pareto.length) {
+          mcParetoSummary.innerHTML = `avg damage: <b>${results.aggregate.avg_damage_score}</b> · Pareto: —`;
+        } else {
+          mcParetoSummary.innerHTML = [
+            `avg damage: <b>${results.aggregate.avg_damage_score}</b>`,
+            ...pareto.map(p => {
+              const cls = paretoHighlightCount === p.protect_count ? "pareto-link selected" : "pareto-link";
+              return `<span class="${cls}" data-pareto="${p.protect_count}">Protect top ${p.protect_count}: <b>${p.damage_reduced_percent}%</b> reduction</span>`;
+            }),
+          ].join("<br>");
+          mcParetoSummary.querySelectorAll(".pareto-link").forEach(el => {
+            el.addEventListener("click", () => highlightPareto(+el.dataset.pareto));
+          });
+        }
+      }
+    }
+
+    function savePreMcPreviewSnapshot() {
+      if (!rawData || preMcPreviewSnapshot) return;
+      preMcPreviewSnapshot = {
+        data: JSON.parse(JSON.stringify(rawData)),
+        graphState: graphState,
+      };
+    }
+
+    function applyMcPreview(data, runId) {
+      mcPreviewActive = true;
+      cascadeActive = true;
+      selectedMcRunId = runId;
+      clearMcHighlights();
+      rawData = data;
+      graphState = data.state;
+      renderMetrics(data);
+      renderRiskTable(data);
+      renderCascadePanel(data);
+      renderMonteCarloPanels(mcResults);
+      drawGraph(filterVisData(data), false);
+    }
+
+    function previewMcScenario(runId) {
+      if (!graphState || !mcResults?.runs) return;
+      const scenario = mcResults.runs.find(r => r.run_id === runId)
+        || mcResults.aggregate?.worst_scenarios?.find(r => r.run_id === runId);
+      if (!scenario) return;
+      showError("");
+      savePreMcPreviewSnapshot();
+      try {
+        const data = GraphCore.previewMonteCarloScenario(
+          graphState,
+          [],
+          getPositions(),
+          getEngOpts(),
+          { ...scenario, use_cascade: getMcOpts().useCascade, trip_threshold: getMcOpts().tripThreshold }
+        );
+        applyMcPreview(data, runId);
+      } catch (e) {
+        showError(e.message || "Ошибка preview");
+      }
+    }
+
+    function resetMcPreview() {
+      if (!preMcPreviewSnapshot) return;
+      mcPreviewActive = false;
+      cascadeActive = false;
+      selectedMcRunId = null;
+      const snap = preMcPreviewSnapshot;
+      preMcPreviewSnapshot = null;
+      rawData = snap.data;
+      baselineRawData = snap.data;
+      graphState = snap.graphState;
+      renderMetrics(snap.data);
+      renderRiskTable(snap.data);
+      renderCascadePanel(null);
+      renderMonteCarloPanels(mcResults);
+      drawGraph(filterVisData(snap.data), false);
+    }
+
+    function resetMonteCarlo() {
+      mcCancel = true;
+      mcRunning = false;
+      mcResults = null;
+      selectedMcRunId = null;
+      clearMcHighlights();
+      if (mcPreviewActive) resetMcPreview();
+      preMcPreviewSnapshot = null;
+      renderMonteCarloPanels(null);
+      updateMcProgress(0, 0);
+      renderCascadePanel(null);
+      if (baselineRawData) {
+        rawData = baselineRawData;
+        drawGraph(filterVisData(rawData), false);
+      }
+      if (mcRunBtn) mcRunBtn.disabled = !graphState;
+      if (mcStopBtn) mcStopBtn.disabled = true;
+      if (mcResetBtn) mcResetBtn.disabled = true;
+    }
+
+    function yieldToUi() {
+      return new Promise(resolve => setTimeout(resolve, 0));
+    }
+
+    async function runMonteCarlo() {
+      if (!graphState || mcRunning) return;
+      showError("");
+      const mcOpts = getMcOpts();
+      mcRunning = true;
+      mcCancel = false;
+      mcResults = { runs: [], aggregate: null, pareto: null };
+      selectedMcRunId = null;
+      clearMcHighlights();
+      if (mcPreviewActive) resetMcPreview();
+
+      if (mcRunBtn) mcRunBtn.disabled = true;
+      if (mcStopBtn) mcStopBtn.disabled = false;
+      if (mcResetBtn) mcResetBtn.disabled = true;
+      updateMcProgress(0, mcOpts.runs);
+
+      const batchSize = mcOpts.runs <= 100 ? mcOpts.runs : 50;
+      let completed = 0;
+
+      try {
+        while (completed < mcOpts.runs && !mcCancel) {
+          const batch = GraphCore.runMonteCarloBatch(
+            graphState,
+            [],
+            getEngOpts(),
+            mcOpts,
+            { startRun: completed, count: batchSize }
+          );
+          mcResults.runs.push(...batch.runs);
+          completed = batch.progress.completed;
+          mcResults.aggregate = GraphCore.aggregateMonteCarloRuns(mcResults.runs);
+          updateMcProgress(completed, mcOpts.runs);
+          renderMonteCarloPanels(mcResults);
+          if (completed < mcOpts.runs) await yieldToUi();
+        }
+
+        if (!mcCancel && mcResults.runs.length) {
+          mcResults.pareto = GraphCore.computeParetoRecommendations(
+            graphState,
+            [],
+            getEngOpts(),
+            mcOpts,
+            mcResults.aggregate
+          );
+          renderMonteCarloPanels(mcResults);
+        }
+      } catch (e) {
+        showError(e.message || "Ошибка Monte Carlo");
+      } finally {
+        mcRunning = false;
+        if (mcRunBtn) mcRunBtn.disabled = !graphState;
+        if (mcStopBtn) mcStopBtn.disabled = true;
+        if (mcResetBtn) mcResetBtn.disabled = !mcResults?.runs?.length;
+      }
+    }
+
+    function stopMonteCarlo() {
+      mcCancel = true;
+      if (mcStopBtn) mcStopBtn.disabled = true;
+    }
+
     function redrawFiltered(fitBounds) {
       if (!rawData) return;
       drawGraph(filterVisData(rawData), fitBounds);
@@ -634,9 +1035,12 @@
       const letter = node.letter || String(node.id);
       let bg = ROLE_COLORS[node.role] || "#888";
       let cls = "node-marker";
+      const nk = nodeMcKey(node.id);
       if (node.opacity != null && node.opacity < 0.5) cls += " dimmed";
       if (node.cascade_initial_outage) cls += " cascade-outage";
       else if (node.cascade_critical_unserved) cls += " critical-unserved";
+      else if (paretoKeys.has(nk)) cls += " pareto-highlight";
+      else if (mcRiskyKeys.has(nk)) cls += " mc-risky";
       if (node.is_slack) cls += " slack";
       if (selectedNodeId === nodeId(node.id)) cls += " selected";
       const style = node.cascade_initial_outage ? `background:#000;border:4px solid #000` : `background:${bg}`;
@@ -683,9 +1087,12 @@
         const letter = node.letter || String(node.id);
         let bg = ROLE_COLORS[node.role] || "#888";
         let cls = "cluster-item";
+        const nk = nodeMcKey(node.id);
         if (node.opacity != null && node.opacity < 0.5) cls += " dimmed";
         if (node.cascade_initial_outage) { cls += " cascade-outage"; bg = "#000"; }
         else if (node.cascade_critical_unserved) cls += " critical-unserved";
+        else if (paretoKeys.has(nk)) cls += " pareto-highlight";
+        else if (mcRiskyKeys.has(nk)) cls += " mc-risky";
         if (node.is_slack) cls += " slack";
         if (selectedNodeId === nodeId(node.id)) cls += " selected";
         const tip = `${letter} · ${ROLE_NAMES[node.role] || node.role}`.replace(/"/g, "&quot;");
@@ -750,6 +1157,7 @@
     function edgeLineStyle(e, loading) {
       const isSelected = selectedEdgeId === e.id;
       const baseOpacity = e.opacity != null ? e.opacity : 0.8;
+      const ek = edgeMcKeyFromId(e.id);
       if (e.cascade_initial_outage) {
         return { color: "#000000", weight: 6, opacity: Math.max(baseOpacity, 0.95), dashArray: null };
       }
@@ -758,6 +1166,12 @@
       }
       if (e.cascade_overload) {
         return { color: "#FF9800", weight: 4, opacity: Math.max(baseOpacity, 0.9), dashArray: null };
+      }
+      if (paretoKeys.has(ek)) {
+        return { color: "#FFC107", weight: 5, opacity: Math.max(baseOpacity, 0.95), dashArray: null };
+      }
+      if (mcRiskyKeys.has(ek)) {
+        return { color: "#9C27B0", weight: 4, opacity: Math.max(baseOpacity, 0.9), dashArray: null };
       }
       if (e.n1_outage) {
         return { color: "#e65100", weight: 6, opacity: Math.max(baseOpacity, 0.95), dashArray: "10 6" };
@@ -873,10 +1287,12 @@
 
     function applyResult(data, fitBounds) {
       rawData = data;
+      baselineRawData = data;
       graphState = data.state;
       renderMetrics(data);
       renderRiskTable(data);
       renderCascadePanel(cascadeActive ? data : null);
+      renderMonteCarloPanels(mcResults);
       if (data.dc_n1) {
         n1Scenarios = data.dc_n1.scenarios;
         n1Worst = data.dc_n1.worst;
@@ -899,6 +1315,7 @@
       dcN1Btn.disabled = false;
       worstN1Btn.disabled = !n1Worst;
       if (cascadeRunBtn && !cascadeActive) cascadeRunBtn.disabled = !graphState || !cascadeInitialOutage;
+      if (mcRunBtn && !mcRunning) mcRunBtn.disabled = !graphState;
     }
 
     function applyCascadeResult(data) {
@@ -985,13 +1402,22 @@
       cascadeActive = false;
       preCascadeSnapshot = null;
       cascadeInitialOutage = null;
+      mcPreviewActive = false;
+      preMcPreviewSnapshot = null;
+      mcResults = null;
+      mcRunning = false;
+      mcCancel = false;
+      clearMcHighlights();
       scenarioSection.style.display = "none";
       n1List.innerHTML = "<li>Запустите «DC N-1 на карте»</li>";
       n1Hint.textContent = "N-1: поочерёдное отключение линий и пересчёт DC";
       n1Hint.className = "hint-box";
       clearDetail();
       renderCascadePanel(null);
+      renderMonteCarloPanels(null);
+      updateMcProgress(0, 0);
       if (cascadeResetBtn) cascadeResetBtn.disabled = true;
+      if (mcResetBtn) mcResetBtn.disabled = true;
       updateCascadeOutageHint();
       try {
         const data = GraphCore.generateEngineeringGeo(solarPool, { count, seed, ...getEngOpts() });
@@ -1104,6 +1530,9 @@
     worstN1Btn.addEventListener("click", showWorstScenario);
     if (cascadeRunBtn) cascadeRunBtn.addEventListener("click", runCascade);
     if (cascadeResetBtn) cascadeResetBtn.addEventListener("click", resetCascade);
+    if (mcRunBtn) mcRunBtn.addEventListener("click", runMonteCarlo);
+    if (mcStopBtn) mcStopBtn.addEventListener("click", stopMonteCarlo);
+    if (mcResetBtn) mcResetBtn.addEventListener("click", resetMonteCarlo);
     if (filterVoltageEl) filterVoltageEl.addEventListener("change", () => redrawFiltered(false));
     if (filterTypeEl) filterTypeEl.addEventListener("change", () => redrawFiltered(false));
     if (filterTopRiskEl) filterTopRiskEl.addEventListener("change", () => redrawFiltered(false));
