@@ -37,6 +37,21 @@
     .preset-row { display: flex; gap: 5px; margin-bottom: 10px; }
     .preset-row button { flex: 1; padding: 7px; border: 1px solid #5c6bc0; background: #fff; color: #3949ab; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; }
     .preset-row button.active { background: #5c6bc0; color: #fff; }
+    .preset-row.profile-row button.active { background: #6a1b9a; border-color: #6a1b9a; }
+    .data-badge {
+      display: inline-block;
+      font-size: 8px;
+      font-weight: 700;
+      padding: 1px 5px;
+      border-radius: 3px;
+      color: #fff;
+      vertical-align: middle;
+      margin-right: 4px;
+    }
+    .data-badge.open { background: #2e7d32; }
+    .data-badge.synthetic { background: #ef6c00; }
+    .data-badge.demo { background: #6a1b9a; }
+    .risk-formula-box { font-size: 10px; line-height: 1.45; color: #555; background: #f3e5f5; border: 1px solid #ce93d8; border-radius: 6px; padding: 8px; margin: 8px 0; }
     .metrics-box { font-size: 11px; line-height: 1.55; background: #e8eaf6; border: 1px solid #9fa8da; border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; color: #283593; }
     .metrics-box b { display: block; margin-bottom: 4px; font-size: 12px; }
     .filter-group { margin: 8px 0; padding: 8px; background: #f7f7f7; border-radius: 6px; font-size: 11px; }
@@ -118,6 +133,15 @@
         <button type="button" data-n="300">300</button>
         <button type="button" data-n="1000">1000</button>
       </div>
+      <div class="preset-row profile-row">
+        <button type="button" data-profile="solar" class="active">СЕС · open data</button>
+        <button type="button" data-profile="tso_backbone">TSO 750/330 · demo</button>
+      </div>
+      <div class="risk-formula-box">
+        <b>Risk / damage (screening · SYNTHETIC)</b><br>
+        damage = unserved + crit×100 + failed×5 + cascade×2<br>
+        risk ≈ impact × (1/redundancy) × repair_time_days
+      </div>
       <div class="field-row">
         <div class="field">
           <label for="n_stations">Станций</label>
@@ -135,6 +159,8 @@
       <p id="pool-hint" style="font-size:10px;color:#888;margin-bottom:8px">Загрузка реестра…</p>
       <button type="button" id="generate-btn" class="primary" disabled>Построить на карте</button>
       <button type="button" id="demo-strike-btn" class="demo-strike-btn" disabled>★ Демо: волна ударов</button>
+
+      <button type="button" id="copy-report-btn" class="secondary" disabled>Скопировать отчёт</button>
 
       <div class="filter-group">
         <h3>Фильтры</h3>
@@ -286,8 +312,8 @@
       <h3>War-Gaming · худшие сценарии</h3>
       <div style="overflow-x:auto">
         <table class="mc-table">
-          <thead><tr><th>#</th><th>damage</th><th>unserved</th><th>crit</th><th>steps</th></tr></thead>
-          <tbody id="mc-worst-body"><tr><td colspan="5">Запустите War-Gaming</td></tr></tbody>
+          <thead><tr><th>#</th><th>damage</th><th>N-k</th><th>unserved</th><th>crit</th><th>steps</th></tr></thead>
+          <tbody id="mc-worst-body"><tr><td colspan="6">Запустите War-Gaming</td></tr></tbody>
         </table>
       </div>
       <div class="pareto-chart-wrap" id="pareto-chart-wrap" style="display:none">
@@ -299,7 +325,7 @@
     </div>
   </aside>
 
-  <script src="graph_core.js?v=18"></script>
+  <script src="graph_core.js?v=19"></script>
   <script>
     const ROLE_COLORS = { generator: "#4CAF50", consumer: "#F44336", transit: "#2196F3" };
     const ASSET_NAMES = { generator: "generation", consumer: "load", transit: "transit" };
@@ -314,6 +340,30 @@
     let mcResults = null, mcRunning = false, mcCancel = false;
     let mcPreviewActive = false, preMcPreviewSnapshot = null, selectedMcRunId = null;
     let mcRiskyKeys = new Set(), paretoKeys = new Set(), paretoHighlightCount = null, selectedMcObjectKey = null;
+    let networkProfile = "solar";
+
+    function dataOriginLabel(node) {
+      if (networkProfile === "tso_backbone") return "DEMO";
+      const src = node.coord_source || (node.synthetic ? "SYNTHETIC_DERIVED" : "OPEN_DATA");
+      if (src === "OPEN_DATA") return "OPEN_DATA";
+      if (src === "SYNTHETIC_DERIVED" || src === "SYNTHETIC_FALLBACK") return "SYNTHETIC";
+      return "DEMO";
+    }
+
+    function dataBadgeHtml(label) {
+      const cls = label === "OPEN_DATA" ? "open" : label === "SYNTHETIC" ? "synthetic" : "demo";
+      return `<span class="data-badge ${cls}">${label}</span>`;
+    }
+
+    function updatePoolHint() {
+      const el = document.getElementById("pool-hint");
+      if (networkProfile === "tso_backbone") {
+        el.textContent = "Профиль: TSO 750/330 · координаты DEMO (synthetic backbone)";
+        return;
+      }
+      const src = solarPool.length > 200 ? "vde-map" : solarPool.length ? "sample" : "fallback";
+      el.textContent = `Пул: ${solarPool.length} СЭС (${src}) · OPEN_DATA / SYNTHETIC`;
+    }
 
     function nodeId(r) { return typeof r === "string" ? parseInt(r, 10) : r; }
     function edgeKey(u, v) { return `${Math.min(+u, +v)},${Math.max(+u, +v)}`; }
@@ -575,7 +625,8 @@
       card.className = "detail-card";
       const type = node.asset_type || ASSET_NAMES[node.role] || node.role;
       card.innerHTML = `
-        <dt>Узел #${node.id}</dt><dd>${node.station_name || node.display_name || ""}</dd>
+        <dt>Узел #${node.id}</dt><dd>${dataBadgeHtml(dataOriginLabel(node))} ${node.station_name || node.display_name || ""}</dd>
+        <dt>origin</dt><dd>${dataOriginLabel(node)}</dd>
         <dt>type</dt><dd>${type}</dd>
         <dt>kV</dt><dd>${node.voltage_level_kv ?? "—"}</dd>
         <dt>risk</dt><dd>${node.risk_score ?? 0} · impact ${node.impact_mw ?? 0} MW</dd>
@@ -595,6 +646,7 @@
       const [u, v] = String(edge.id).split("-").map(Number);
       card.innerHTML = `
         <dt>Линия</dt><dd>${edge.label || edge.id}</dd>
+        <dt>origin</dt><dd>SYNTHETIC</dd>
         <dt>type</dt><dd>${edge.edge_type || "line"}</dd>
         <dt>loading</dt><dd>${loading}%</dd>
         <dt>capacity</dt><dd>${edge.capacity_mw ?? "—"} MW</dd>
@@ -717,7 +769,7 @@
 
     function renderMonteCarloPanels(results) {
       if (!results) {
-        document.getElementById("mc-worst-body").innerHTML = "<tr><td colspan=\"5\">Запустите War-Gaming</td></tr>";
+        document.getElementById("mc-worst-body").innerHTML = "<tr><td colspan=\"6\">Запустите War-Gaming</td></tr>";
         document.getElementById("mc-pareto-summary").textContent = "После War-Gaming: кликните Protect top 1/3/5 для подсветки на карте";
         renderParetoChart(null, null);
         return;
@@ -725,11 +777,18 @@
       const worst = results?.aggregate?.worst_scenarios || [];
       const body = document.getElementById("mc-worst-body");
       body.innerHTML = worst.length
-        ? worst.slice(0, 10).map(r => `
-          <tr class="clickable${selectedMcRunId === r.run_id ? " selected" : ""}" data-run-id="${r.run_id}">
-            <td>#${r.run_id}</td><td><b>${r.damage_score}</b></td><td>${r.unserved_load_mw}</td><td>${r.critical_unserved_count}</td><td>${r.cascade_steps}</td>
-          </tr>`).join("")
-        : "<tr><td colspan=\"5\">Запустите War-Gaming</td></tr>";
+        ? worst.slice(0, 10).map(r => {
+          const nk = (r.outaged_objects || []).length || String(r.outaged_objects_label || "").split(",").filter(Boolean).length;
+          const outLabel = r.outaged_objects_label
+            || (r.outaged_objects || []).map(o => o.label).join(", ")
+            || "—";
+          return `
+          <tr class="clickable${selectedMcRunId === r.run_id ? " selected" : ""}" data-run-id="${r.run_id}" title="${outLabel}">
+            <td>#${r.run_id}</td><td><b>${r.damage_score}</b></td><td>${nk || "—"}</td>
+            <td>${r.unserved_load_mw}</td><td>${r.critical_unserved_count}</td><td>${r.cascade_steps}</td>
+          </tr>`;
+        }).join("")
+        : "<tr><td colspan=\"6\">Запустите War-Gaming</td></tr>";
       body.querySelectorAll("tr.clickable").forEach(tr => {
         tr.addEventListener("click", () => previewMcScenario(+tr.dataset.runId));
       });
@@ -879,7 +938,8 @@
         for (const node of geoNodes) {
           const id = nodeId(node.id);
           const m = L.marker([node.lat, node.lng], { icon: makeIcon(node), riseOnHover: true });
-          const tip = (node.title || node.tooltip || node.station_name || `#${id} ${node.role}`).replace(/\n/g, "<br>");
+          const origin = dataOriginLabel(node);
+          const tip = `${dataBadgeHtml(origin)} ${(node.title || node.tooltip || node.station_name || `#${id} ${node.role}`).replace(/\n/g, "<br>")}`;
           m.bindTooltip(tip, { direction: "top", offset: [0, -8] });
           m.on("click", () => {
             if (rebalancing || drawingMap) return;
@@ -954,6 +1014,7 @@
       document.getElementById("mc-run-btn").disabled = mcRunning || !graphState;
       const poolReady = !document.getElementById("generate-btn").disabled || !!graphState;
       document.getElementById("demo-strike-btn").disabled = mcRunning || !poolReady;
+      document.getElementById("copy-report-btn").disabled = !graphState;
       updateCascadeHint();
     }
 
@@ -1005,7 +1066,7 @@
         initMap();
         const count = +document.getElementById("n_stations").value;
         const seed = +document.getElementById("seed").value;
-        const raw = GraphCore.generateEngineeringLargeGeo(solarPool, { count, seed, ...getEngOpts() });
+        const raw = GraphCore.generateEngineeringLargeGeo(solarPool, { count, seed, profile: networkProfile, ...getEngOpts() });
         const data = GraphCore.rebalanceEngineering(raw.state, [], null, getEngOpts());
         if (!data.nodes.length) throw new Error("Граф без узлов");
         applyResult(data, true);
@@ -1167,13 +1228,18 @@
       btn.disabled = true;
       showError("");
       try {
+        networkProfile = "tso_backbone";
+        document.querySelectorAll(".profile-row button").forEach(b => {
+          b.classList.toggle("active", b.dataset.profile === "tso_backbone");
+        });
+        updatePoolHint();
         document.querySelectorAll(".preset-row button").forEach(x => x.classList.remove("active"));
         document.querySelector('.preset-row button[data-n="100"]')?.classList.add("active");
         document.getElementById("n_stations").value = 100;
         document.getElementById("seed").value = 42;
         document.getElementById("mc-runs").value = "100";
         document.getElementById("mc-max-outages").value = "3";
-        if (!graphState) await generate();
+        if (!graphState || graphState.params?.profile !== "tso_backbone") await generate();
         if (!graphState) throw new Error("Не удалось построить сеть");
         await runMonteCarlo();
         if (mcCancel || !mcResults?.aggregate?.worst_scenarios?.length) return;
@@ -1186,6 +1252,58 @@
       finally {
         const poolReady = !document.getElementById("generate-btn").disabled || !!graphState;
         btn.disabled = mcRunning || !poolReady;
+      }
+    }
+
+    function buildScenarioReport() {
+      const p = graphState?.params || {};
+      const prof = networkProfile === "tso_backbone" ? "TSO 750/330 (DEMO)" : "СЕС / OPEN_DATA + SYNTHETIC";
+      const lines = [
+        "=== MVP War-Gaming report ===",
+        "SYNTHETIC screening · NOT OPERATIONAL · NOT engineering recommendation",
+        "",
+        `Profile: ${prof}`,
+        `Nodes: ${p.n_vertices || "—"} · Seed: ${p.seed ?? document.getElementById("seed").value}`,
+        `DC max loading: ${lastFullData?.engineering_metrics?.max_loading_percent ?? "—"}%`,
+        `Cap violations: ${lastFullData?.engineering_metrics?.capacity_violations ?? "—"}`,
+        "",
+      ];
+      const top = lastFullData?.top_risk_objects || [];
+      if (top.length) {
+        lines.push("Top risk objects:");
+        top.slice(0, 5).forEach((r, i) => {
+          lines.push(`  ${i + 1}. ${r.object} (${r.type}, ${r.voltage_kv} kV) risk=${r.risk_score} repair=${r.repair_time_days ?? "—"}d`);
+        });
+        lines.push("");
+      }
+      if (mcResults?.aggregate) {
+        lines.push(`War-Gaming: ${mcResults.runs?.length || 0} runs · avg damage=${mcResults.aggregate.avg_damage_score}`);
+        const w = mcResults.aggregate.worst_scenarios?.[0];
+        if (w) {
+          const nk = (w.outaged_objects || []).length;
+          lines.push(`Worst #${w.run_id}: damage=${w.damage_score} · N-k=${nk} · ${w.outaged_objects_label || ""}`);
+        }
+        lines.push("");
+        (mcResults.pareto || []).forEach(pt => {
+          lines.push(`Pareto protect top ${pt.protect_count}: ${pt.damage_reduced_percent}% damage reduction`);
+        });
+      }
+      lines.push("", "— End of screening report —");
+      return lines.join("\n");
+    }
+
+    async function copyScenarioReport() {
+      if (!graphState) return;
+      const text = buildScenarioReport();
+      try {
+        await navigator.clipboard.writeText(text);
+        const btn = document.getElementById("copy-report-btn");
+        const prev = btn.textContent;
+        btn.textContent = "Скопировано ✓";
+        setTimeout(() => { btn.textContent = prev; }, 2200);
+      } catch (_) {
+        showError("Clipboard недоступен — выделите текст из консоли отчёта вручную");
+        console.log(text);
       }
     }
 
@@ -1202,12 +1320,20 @@
       document.getElementById("mc-reset-btn").disabled = true;
     }
 
-    document.querySelectorAll(".preset-row button").forEach(b => {
+    document.querySelectorAll(".preset-row button[data-n]").forEach(b => {
       b.addEventListener("click", () => {
-        document.querySelectorAll(".preset-row button").forEach(x => x.classList.remove("active"));
+        document.querySelectorAll(".preset-row button[data-n]").forEach(x => x.classList.remove("active"));
         b.classList.add("active");
         document.getElementById("n_stations").value = b.dataset.n;
         document.getElementById("edge_mode").value = "top_risk";
+      });
+    });
+    document.querySelectorAll(".profile-row button").forEach(b => {
+      b.addEventListener("click", () => {
+        document.querySelectorAll(".profile-row button").forEach(x => x.classList.remove("active"));
+        b.classList.add("active");
+        networkProfile = b.dataset.profile || "solar";
+        updatePoolHint();
       });
     });
     document.getElementById("generate-btn").addEventListener("click", generate);
@@ -1218,6 +1344,7 @@
     document.getElementById("mc-stop-btn").addEventListener("click", () => { mcCancel = true; });
     document.getElementById("mc-reset-btn").addEventListener("click", resetMonteCarlo);
     document.getElementById("demo-strike-btn").addEventListener("click", runDemoStrike);
+    document.getElementById("copy-report-btn").addEventListener("click", copyScenarioReport);
     document.getElementById("toggle-panels-btn").addEventListener("click", () => {
       document.body.classList.toggle("graph-only");
       setTimeout(() => map?.invalidateSize(), 120);
@@ -1233,8 +1360,7 @@
       initMap();
       try {
         solarPool = await loadSolarPool();
-        const src = solarPool.length > 200 ? "vde-map" : solarPool.length ? "sample" : "fallback";
-        document.getElementById("pool-hint").textContent = `Пул: ${solarPool.length} СЭС (${src})`;
+        updatePoolHint();
       } catch (_) {
         document.getElementById("pool-hint").textContent = "Реестр недоступен — SYNTHETIC_FALLBACK";
         solarPool = [];

@@ -2597,6 +2597,105 @@
     return out;
   }
 
+  const TSO_BACKBONE_HUBS = [
+    { name: "ПС 750 Київ", lat: 50.45, lon: 30.52 },
+    { name: "ПС 750 Дніпро", lat: 48.46, lon: 35.05 },
+    { name: "ПС 750 Запоріжжя", lat: 47.84, lon: 35.14 },
+    { name: "ПС 750 Харків", lat: 49.99, lon: 36.23 },
+    { name: "ПС 750 Одеса", lat: 46.48, lon: 30.73 },
+    { name: "ПС 750 Львів", lat: 49.84, lon: 24.03 },
+    { name: "ПС 750 Полтава", lat: 49.59, lon: 34.55 },
+    { name: "ПС 750 Вінниця", lat: 49.23, lon: 28.47 },
+    { name: "ПС 330 Рівне", lat: 50.62, lon: 26.25 },
+    { name: "ПС 330 Миколаїв", lat: 46.97, lon: 32.00 },
+    { name: "ПС 330 Чернігів", lat: 51.50, lon: 31.29 },
+    { name: "ПС 330 Суми", lat: 50.91, lon: 34.80 },
+  ];
+
+  function deriveTsoBackbonePool(targetCount, seed) {
+    const rng = new Random(seed);
+    const stations = [];
+    const hubCount = Math.min(TSO_BACKBONE_HUBS.length, Math.max(6, Math.floor(targetCount * 0.1)));
+    for (let i = 0; i < hubCount; i++) {
+      const h = TSO_BACKBONE_HUBS[i];
+      stations.push({
+        station_id: `tso-hub-${i}`,
+        name: h.name,
+        lat: h.lat + (rng.random() - 0.5) * 0.08,
+        lon: h.lon + (rng.random() - 0.5) * 0.12,
+        oblast: "",
+        type: "substation",
+        coord_source: "DEMO",
+        synthetic: true,
+      });
+    }
+    const ringNames = ["ПС 330", "ПС 330", "ВЛ 330", "АТ 330/110", "ПС 110"];
+    while (stations.length < targetCount) {
+      const i = stations.length;
+      const lat = UKRAINE_BBOX.latMin + rng.random() * (UKRAINE_BBOX.latMax - UKRAINE_BBOX.latMin);
+      const lon = UKRAINE_BBOX.lonMin + rng.random() * (UKRAINE_BBOX.lonMax - UKRAINE_BBOX.lonMin);
+      const tag = ringNames[i % ringNames.length];
+      stations.push({
+        station_id: `tso-${i}`,
+        name: `${tag} #${i}`,
+        lat,
+        lon,
+        oblast: "",
+        type: "substation",
+        coord_source: "DEMO",
+        synthetic: true,
+      });
+    }
+    const passport = {
+      coords: "DEMO (TSO backbone layout)",
+      links: "SYNTHETIC",
+      capacity: "SYNTHETIC",
+      reactance: "SYNTHETIC",
+      model: "TSO_BACKBONE_DC_SCREENING",
+      network_profile: "tso_backbone",
+    };
+    return { stations, passport };
+  }
+
+  function applyTsoBackboneEngineering(state, seed) {
+    const G = stateToGraph(state);
+    const rng = new Random((seed >>> 0) + 909);
+    const byDegree = [...G.nodes()].sort((a, b) => G.degree(b) - G.degree(a));
+    const n750 = Math.max(4, Math.floor(byDegree.length * 0.07));
+    const n330 = Math.max(10, Math.floor(byDegree.length * 0.28));
+    const kv = state.voltage_level_kv || {};
+    const nodeTypes = state.node_types || {};
+    byDegree.forEach((v, i) => {
+      if (i < n750) {
+        kv[v] = 750;
+        nodeTypes[v] = "substation";
+        state.roles[v] = "transit";
+      } else if (i < n750 + n330) {
+        kv[v] = 330;
+        nodeTypes[v] = "substation";
+        if (state.roles[v] === "consumer" && rng.random() < 0.35) state.roles[v] = "transit";
+      } else if (state.roles[v] === "transit") {
+        kv[v] = rng.random() < 0.4 ? 330 : 110;
+      }
+      const g = state.geo?.[String(v)] ?? state.geo?.[v];
+      if (g && i < n750 && !String(g.name).includes("750")) {
+        g.name = TSO_BACKBONE_HUBS[i % TSO_BACKBONE_HUBS.length]?.name || `ПС 750 #${v}`;
+      }
+    });
+    state.voltage_level_kv = kv;
+    state.node_types = nodeTypes;
+    state.passport = {
+      ...state.passport,
+      coords: "DEMO",
+      network_profile: "tso_backbone",
+      model: "TSO_BACKBONE_DC_SCREENING",
+    };
+    injectTransformerEdges(state, seed + 11);
+    mergeEdgeCapacities(state, G, seed + 12);
+    assignEngineeringEdgeTypes(state, G);
+    return state;
+  }
+
   function deriveGeoPool(pool, targetCount, seed) {
     const rng = new Random(seed);
     const eligible = normalizeSolarPool(pool);
@@ -4286,14 +4385,25 @@
   function generateEngineeringLargeGeo(pool, opts = {}) {
     const count = +opts.count || 300;
     const seed = +opts.seed || 42;
+    const profile = opts.profile || "solar";
     if (count < 30) throw new Error("Минимум 30 станций для large engineering geo");
     if (count > MAX_LARGE_VERTICES) throw new Error(`Максимум ${MAX_LARGE_VERTICES} станций`);
-    const { stations, passport: geoPassport } = deriveGeoPool(pool, count, seed);
-    const third = Math.floor(count / 3);
-    const rem = count - third * 3;
-    const nGen = third + (rem > 0 ? 1 : 0);
-    const nCons = third + (rem > 1 ? 1 : 0);
-    const nTransit = count - nGen - nCons;
+    const geoDerived = profile === "tso_backbone"
+      ? deriveTsoBackbonePool(count, seed)
+      : deriveGeoPool(pool, count, seed);
+    const { stations, passport: geoPassport } = geoDerived;
+    let nGen, nCons, nTransit;
+    if (profile === "tso_backbone") {
+      nGen = Math.max(3, Math.floor(count * 0.12));
+      nCons = Math.max(5, Math.floor(count * 0.22));
+      nTransit = count - nGen - nCons;
+    } else {
+      const third = Math.floor(count / 3);
+      const rem = count - third * 3;
+      nGen = third + (rem > 0 ? 1 : 0);
+      nCons = third + (rem > 1 ? 1 : 0);
+      nTransit = count - nGen - nCons;
+    }
     const roles = assignRoles(count, nGen, nCons, seed);
     const geo = {};
     stations.forEach((s, i) => {
@@ -4331,6 +4441,7 @@
       seed,
       mode: "engineering_large_map",
       scale: "large",
+      profile,
       get total_surplus() {
         return this.total_production - this.total_consumption;
       },
@@ -4350,6 +4461,7 @@
       passport,
     };
     initEngineeringState(state, seed);
+    if (profile === "tso_backbone") applyTsoBackboneEngineering(state, seed);
     const renderOpts = opts.renderOpts || defaultRenderOpts(count);
     return evaluateStateEngineering(state, new Set(), null, { ...opts, renderOpts });
   }

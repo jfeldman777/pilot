@@ -25,6 +25,8 @@
 | Сценарии ударов (не погода) | 🟡 War-Gaming = волны поражения | Кнопка «Демо: волна ударов» | Цели, время, погода |
 | Monte Carlo миллионы прогонов | 🟡 100–5000 в браузере | War-Gaming runs | Batch + workers + БД |
 | Pareto: минимум укреплений | 🟢 Protect top 1/3/5 + кривая | Правая панель режима 8 | Полная кривая до 90% |
+| TSO 750/330 demo backbone | 🟢 Пресет + автодемо | Режим 8 | Реальная топология Укрэнерго |
+| Бейджи OPEN_DATA / SYNTHETIC / DEMO | 🟢 Tooltip + детали | Режим 8 | NDA_CALIBRATED слой |
 | Risk: ущерб × резерв × repair | 🟡 Synthetic screening | Top-10 risky objects | Калибровка по истории |
 | ML-корректор (GB, PINN) | 🔴 Нет | — | Grey-box слой |
 | Автокалибровка к реальности | 🔴 Нет | — | MC → метрика → параметры |
@@ -77,8 +79,18 @@ Synthetic сеть             →     Open data + NDA слой
 
 ## Следующие шаги (после приёмки MVP)
 
-1. Пресет TSO backbone 750/330 (synthetic)
-2. FastAPI + pandapower microservice
-3. Batch War-Gaming 10k+ в файл
-4. Бейджи OPEN_DATA / SYNTHETIC на каждом объекте
+1. ~~Пресет TSO backbone 750/330 (synthetic)~~ — **сделано** (режим 8)
+2. ~~Бейджи OPEN_DATA / SYNTHETIC / DEMO~~ — **сделано** (карта + детали)
+3. FastAPI + pandapower microservice
+4. Batch War-Gaming 10k+ в файл
 5. Архитектура агентного контура (документ + заглушка)
+
+## Фаза 2 (реализовано)
+
+| # | Функция | Где |
+|---|---------|-----|
+| 7 | TSO 750/330 synthetic backbone | Режим 8 · пресет «TSO 750/330 · demo» |
+| 8 | Бейджи происхождения данных | Tooltip, детали узла |
+| 9 | Формулы risk / damage | Sidebar режима 8 |
+| 10 | N-k в War-Gaming | Колонка N-k в worst-таблице |
+| 12 | Копировать отчёт | Кнопка в режиме 8 |
