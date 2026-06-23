@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Письмо заказчику — MVP</title>
+  <link rel="stylesheet" href="home-nav.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", Arial, sans-serif;
+      margin: 0;
+      padding: 56px 20px 48px;
+      background: #f5f6f8;
+      color: #222;
+      line-height: 1.6;
+    }
+    .wrap { max-width: 820px; margin: 0 auto; }
+    .top-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 18px;
+      font-size: 13px;
+    }
+    .top-bar a { color: #1565c0; text-decoration: none; font-weight: 600; }
+    .top-bar a:hover { text-decoration: underline; }
+    .top-bar .sep { color: #bbb; }
+    #content {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 28px 32px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    }
+    #content h1 { font-size: 1.65rem; margin-top: 0; color: #283593; border-bottom: 2px solid #e8eaf6; padding-bottom: 10px; }
+    #content h2 { font-size: 1.2rem; margin-top: 1.6em; color: #3949ab; }
+    #content h3 { font-size: 1.05rem; margin-top: 1.2em; }
+    #content table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 12px 0; }
+    #content th, #content td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; vertical-align: top; }
+    #content th { background: #e8eaf6; }
+    #content tr:nth-child(even) td { background: #fafafa; }
+    #content code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; font-size: 0.92em; }
+    #content pre { background: #263238; color: #eceff1; padding: 14px 16px; border-radius: 8px; overflow-x: auto; font-size: 12px; white-space: pre-wrap; }
+    #content pre code { background: none; padding: 0; color: inherit; }
+    #content a { color: #1565c0; }
+    .loading { color: #666; font-style: italic; }
+    .err { color: #c62828; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <a href="index.html" class="home-btn" title="Выбор входа">⌂</a>
+  <div class="wrap">
+    <div class="top-bar">
+      <a href="index.html">← Вход</a>
+      <span class="sep">·</span>
+      <a href="start.html">★ Guided demo</a>
+      <span class="sep">·</span>
+      <a href="eng-large-map.html?demo=1">Автодемо</a>
+      <span class="sep">·</span>
+      <a href="roadmap.html">Roadmap</a>
+    </div>
+    <div id="content" class="loading">Загрузка письма…</div>
+  </div>
+  <script>
+    fetch("CUSTOMER_LETTER.md")
+      .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+      .then(md => { document.getElementById("content").innerHTML = marked.parse(md); })
+      .catch(e => {
+        document.getElementById("content").innerHTML =
+          '<p class="err">Не удалось загрузить CUSTOMER_LETTER.md: ' + e.message + '</p>';
+      });
+  </script>
+</body>
+</html>

@@ -91,6 +91,11 @@ def batch_results_page():
     return send_from_directory(ROOT, "batch-results.html")
 
 
+@app.get("/customer-letter.html")
+def customer_letter_page():
+    return send_from_directory(ROOT, "customer-letter.html")
+
+
 @app.get("/readme.html")
 def readme_page():
     return send_from_directory(ROOT, "readme.html")
